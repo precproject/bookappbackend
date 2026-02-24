@@ -34,6 +34,8 @@ exports.phonepeWebhook = async (req, res) => {
     const order = await Order.findOne({ orderId: merchantTransactionId });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
+    const io = req.app.get('io');
+
     if (code === 'PAYMENT_SUCCESS') {
       order.status = 'In Progress'; 
       order.payment.status = 'Success';
@@ -68,8 +70,13 @@ exports.phonepeWebhook = async (req, res) => {
           await referral.save();
         }
       }
+      if (io) {
+        req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Success', orderId: order.orderId, message: 'Payment successful' });
+      }
 
-      req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Success', orderId: order.orderId });
+      // Inside the PAYMENT_SUCCESS block, populate user to get email:
+      const populatedOrder = await Order.findById(order._id).populate('user', 'name email');
+      await sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) });
 
     } else {
       order.status = 'Failed';
@@ -77,7 +84,10 @@ exports.phonepeWebhook = async (req, res) => {
       order.payment.updatedAt = Date.now();
       await order.save();
 
-      req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Failed', message: 'Payment failed' });
+      if (io) {
+        req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Failed', orderId: order.orderId, message: 'Payment failed' });
+      }
+      
     }
 
     res.status(200).send('OK');
@@ -118,6 +128,17 @@ exports.deliveryWebhook = async (req, res) => {
     });
 
     await order.save();
+
+    const populatedOrder = await Order.findById(order._id).populate('user', 'email');
+    if (mappedStage === 'Delivered') {
+      await sendEmail({ to: populatedOrder.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) });
+    } else if (mappedStage.includes('Transit')) {
+      // Check if it's the FIRST transit update to avoid spamming
+      if (order.transitHistory.length === 2) { 
+        await sendEmail({ to: populatedOrder.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) });
+      }
+    }
+
     res.status(200).json({ success: true, message: 'Transit history updated' });
 
   } catch (error) {

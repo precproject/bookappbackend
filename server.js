@@ -26,7 +26,12 @@ connectDB().then(async () => {
 
 const app = express();
 
-// const server = http.createServer(app);
+let server = undefined 
+
+if (process.env.NODE_ENV !== 'production') {
+      server = http.createServer(app);
+}
+
 // Configure Socket.io for Real-time Webhook updates to frontend
 // const io = new Server(server, {
 //   cors: {
@@ -43,7 +48,7 @@ app.use(helmet());
 
 // app.use(cors());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*', 
+  origin: '*', 
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
@@ -98,10 +103,12 @@ app.use((err, req, res, next) => {
 });
 
 // FOR SERVER / VPC - Enable this
-// const PORT = process.env.PORT || 5001;
-// server.listen(PORT, () => {
-//   console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-// });
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5001;
+  server.listen(PORT, () => {
+    console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  });
+}
 
 // IMPORTANT FOR VERCEL: 
 // We DO NOT use app.listen(PORT). Instead, we export the Express app.

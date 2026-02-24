@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const sendEmail = require('../utils/sendEmail');
+const templates = require('../utils/emailTemplates');
 
 // Helper to generate JWT Token
 const generateToken = (id) => {
@@ -26,6 +28,8 @@ exports.registerUser = async (req, res) => {
       status: 'Active'
     });
 
+    await sendEmail({ to: user.email, subject: `Welcome to ${process.env.STORE_NAME}`, html: templates.welcomeEmail(user.name) });
+    
     res.status(201).json({
       _id: user._id,
       name: user.name,

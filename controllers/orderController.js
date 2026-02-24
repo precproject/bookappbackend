@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const Config = require('../models/Config');
 const axios = require('axios');
 
+const sendEmail = require('../utils/sendEmail');
+const templates = require('../utils/emailTemplates');
+
 // @route   POST /api/orders/checkout
 // @desc    Create new order & return payment gateway payload
 exports.createOrder = async (req, res) => {
@@ -124,6 +127,8 @@ exports.createOrder = async (req, res) => {
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
 
+    await sendEmail({ to: req.user.email, subject: `Order Initiated - #${order.orderId}`, html: templates.orderPlacedEmail(order, req.user.name) });
+    
     // 7. Generate Payment Gateway Payload (Example for PhonePe)
     // In a real app, you would construct the base64 payload and X-VERIFY checksum here
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
@@ -241,6 +246,47 @@ exports.verifyPaymentStatus = async (req, res) => {
       await order.save();
       return res.status(200).json({ status: 'Failed', message: 'Payment dropped or invalid merchant keys.' });
     }
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   GET /api/orders/retry-payment/:orderId
+// @desc    Generate a new payment link for an abandoned/pending order
+exports.retryPayment = async (req, res) => {
+  try {
+    const order = await Order.findOne({ orderId: req.params.orderId, user: req.user._id });
+    
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.status !== 'Pending Payment') {
+      return res.status(400).json({ message: 'Order is not pending payment' });
+    }
+
+    // Get dynamic config
+    const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    const payConfig = config ? config.payment : null;
+    const merchantId = payConfig?.merchantId || process.env.PHONEPE_MERCHANT_ID;
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
+
+    const paymentPayload = {
+      merchantId: merchantId,
+      merchantTransactionId: order.orderId, // Use the SAME order ID
+      merchantUserId: req.user._id.toString(),
+      amount: order.priceBreakup.total * 100,
+      redirectUrl: `${frontendUrl}/payment-status/${order.orderId}`,
+      redirectMode: "REDIRECT",
+      callbackUrl: `${apiUrl}/api/webhooks/phonepe`,
+      mobileNumber: req.user.mobile,
+      paymentInstrument: { type: "PAY_PAGE" }
+    };
+
+    res.status(200).json({
+      success: true,
+      paymentPayload
+    });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
