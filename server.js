@@ -48,7 +48,7 @@ app.use(helmet());
 
 // app.use(cors());
 app.use(cors({
-  origin: '*', 
+  origin: 'https://www.sahakarstree.com',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
