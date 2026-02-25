@@ -3,6 +3,9 @@ const router = express.Router();
 const Book = require('../models/Book');
 const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
+const { getRecentPurchases } = require('../controllers/publicController');
+
+router.get('/recent-purchases', getRecentPurchases);
 
 // @route   GET /api/public/books
 // @desc    Fetch available books for the storefront

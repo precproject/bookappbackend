@@ -5,5 +5,7 @@ const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/addresses', protect, userController.getAddresses);
 router.post('/addresses', protect, userController.addAddress);
+router.get('/cart', protect, userController.getCart);
+router.put('/cart', protect, userController.updateCart);
 
 module.exports = router;

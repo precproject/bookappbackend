@@ -33,3 +33,25 @@ exports.addAddress = async (req, res) => {
     res.status(500).json({ message: 'Failed to save address', error: error.message });
   }
 };
+
+// GET /api/user/cart
+exports.getCart = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('cart');
+    res.status(200).json({ cart: user.cart || [] });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch cart' });
+  }
+};
+
+// PUT /api/user/cart
+exports.updateCart = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    user.cart = req.body.cart;
+    await user.save();
+    res.status(200).json({ message: 'Cart synced' });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to sync cart' });
+  }
+};

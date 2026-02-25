@@ -17,6 +17,13 @@ const userSchema = new mongoose.Schema({
     state: { type: String, required: true },
     pincode: { type: String, required: true }
   }],
+  cart: [{
+    bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
+    name: String,
+    type: String,
+    price: Number,
+    qty: Number
+  }],
 }, { timestamps: true });
 
 // Hash password before saving (FIXED: removed 'next' callback for async hook)
