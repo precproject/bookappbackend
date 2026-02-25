@@ -3,9 +3,19 @@ const router = express.Router();
 const Book = require('../models/Book');
 const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
-const { getRecentPurchases } = require('../controllers/publicController');
+const { getRecentPurchases, getAllBooks, getBookByIdOrSku, getBookReviews, addBookReview } = require('../controllers/publicController');
+const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/recent-purchases', getRecentPurchases);
+// Book Catalog
+router.get('/books', getAllBooks);
+
+// Single Book Details (Accepts :id as MongoDB ID or SKU String)
+router.get('/books/:id', getBookByIdOrSku);
+
+// Book Reviews
+router.get('/books/:id/reviews', getBookReviews);
+router.post('/books/:id/reviews', protect, addBookReview);
 
 // @route   GET /api/public/books
 // @desc    Fetch available books for the storefront

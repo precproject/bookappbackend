@@ -29,7 +29,7 @@ exports.registerUser = async (req, res) => {
     });
 
     await sendEmail({ to: user.email, subject: `Welcome to ${process.env.STORE_NAME}`, html: templates.welcomeEmail(user.name) });
-    
+
     res.status(201).json({
       _id: user._id,
       name: user.name,
@@ -39,6 +39,7 @@ exports.registerUser = async (req, res) => {
       token: generateToken(user._id),
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({ message: error.message });
   }
 };
