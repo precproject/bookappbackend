@@ -4,8 +4,8 @@ const configSchema = new mongoose.Schema({
   // Use a fixed ID so we always update the same single document
   singletonId: { type: String, default: 'SYSTEM_CONFIG', unique: true },
   general: {
-    storeName: { type: String, default: 'Chintamukti' },
-    supportEmail: { type: String, default: 'support@chintamukti.com' },
+    storeName: { type: String, default: 'SahakarStree' },
+    supportEmail: { type: String, default: 'sahakarstree@gmail.com' },
     supportPhone: { type: String, default: '+91 0000000000' }
   },
   payment: {

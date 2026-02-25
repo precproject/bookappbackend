@@ -41,7 +41,7 @@ const runTests = async () => {
   // --- 1. ADMIN LOGIN ---
   try {
     console.log('⏳ 1. Authenticating Admin...');
-    const adminLogin = await api.post('/auth/login', { email: 'admin@chintamukti.com', password: 'Admin@123' });
+    const adminLogin = await api.post('/auth/login', { email: 'admin@sahakarstree.com', password: 'Admin@123' });
     state.adminToken = adminLogin.data.token;
     state.adminMongoId = adminLogin.data._id;
     console.log('✅ Admin Logged In!\n');

@@ -23,13 +23,13 @@ const initializeSystem = async () => {
 
       await User.create({
         name: 'Super Admin',
-        email: 'admin@chintamukti.com',
+        email: 'admin@sahakarstree.com',
         mobile: '9999999999',
         password: "Admin@123", // Bypassing pre-save hook by hashing here manually for safety in init script
         role: 'Admin',
         status: 'Active'
       });
-      console.log('Default Admin Created: admin@chintamukti.com / Admin@123');
+      console.log('Default Admin Created: admin@sahakarstree.com / Admin@123');
       console.log('PLEASE CHANGE THIS PASSWORD IMMEDIATELY AFTER LOGIN.');
     } else {
       console.log('System verified: Admin user exists.');
