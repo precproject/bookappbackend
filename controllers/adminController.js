@@ -297,30 +297,50 @@ exports.deleteBook = async (req, res) => {
   
 
 // --- REFERRALS ---
+
 // @route   GET /api/admin/referrals
 exports.getAllReferrals = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query;
+    
+    // 1. Handle Search
     let query = {};
     if (search) {
       query.code = { $regex: search, $options: 'i' };
     }
+
+    // 2. Pagination Math
     const skip = (Number(page) - 1) * Number(limit);
     const totalItems = await Referral.countDocuments(query);
     
-    const referrals = await Referral.find(query)
-      .populate('userId', 'name') // Assuming schema uses userId ref
+    // 3. Fetch from DB & Populate the User details
+    const rawReferrals = await Referral.find(query)
+      .populate('user', 'name email') // Correctly populates the user ref
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit));
 
-    // Calculate global stats for the header
+    // 4. Map DB fields to match what the Frontend React component expects exactly
+    const referrals = rawReferrals.map(ref => ({
+      _id: ref._id,
+      code: ref.code,
+      userId: ref.user ? ref.user._id : 'N/A',
+      userName: ref.user ? ref.user.name : 'Unknown User',
+      rate: ref.rewardRate,        // DB uses rewardRate, Frontend uses rate
+      uses: ref.uses,
+      earned: ref.totalEarned,     // DB uses totalEarned, Frontend uses earned
+      pending: ref.pendingPayout,  // DB uses pendingPayout, Frontend uses pending
+      status: ref.status,
+      isDiscountLinked: ref.isDiscountLinked
+    }));
+
+    // 5. Calculate Global Header Stats
     const allRefs = await Referral.find();
     let totalEarned = 0;
     let totalPending = 0;
     allRefs.forEach(r => {
-      totalEarned += (r.earned || 0);
-      totalPending += (r.pending || 0);
+      totalEarned += (r.totalEarned || 0);
+      totalPending += (r.pendingPayout || 0);
     });
 
     res.status(200).json({
@@ -338,23 +358,105 @@ exports.getAllReferrals = async (req, res) => {
 // @route   POST /api/admin/referrals
 exports.createReferral = async (req, res) => {
   try {
-    const referral = await Referral.create(req.body);
+    const { code, userId, rate, isDiscountLinked, status } = req.body;
+
+    // Create the referral using the backend schema mappings
+    const referral = await Referral.create({
+      code: code.toUpperCase(),
+      user: userId,               // Frontend sends userId, backend needs user
+      rewardRate: rate,           // Frontend sends rate, backend needs rewardRate
+      isDiscountLinked,
+      status
+    });
+
+    // Optionally: Update the User document so the user knows their code
+    await User.findByIdAndUpdate(userId, { referralCode: code.toUpperCase() });
+
     res.status(201).json(referral);
+  } catch (error) {
+    // Check for duplicate code error
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'This referral code already exists.' });
+    }
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   PUT /api/admin/referrals/:id
+exports.updateReferral = async (req, res) => {
+  try {
+    const { code, rate, isDiscountLinked, status } = req.body;
+
+    const referral = await Referral.findByIdAndUpdate(
+      req.params.id,
+      { 
+        code: code.toUpperCase(), 
+        rewardRate: rate, 
+        isDiscountLinked, 
+        status 
+      },
+      { new: true }
+    );
+
+    if (!referral) return res.status(404).json({ message: 'Referral not found' });
+    res.status(200).json(referral);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @route   PUT /api/admin/referrals/:id/mark-paid
-exports.markReferralPaid = async (req, res) => {
+// @route   GET /api/admin/referrals/:id/transactions
+exports.getReferralTransactions = async (req, res) => {
   try {
-    const { amount } = req.body;
-    const referral = await Referral.findById(req.params.id);
+    // Populate the nested Order document inside the transactions array
+    const referral = await Referral.findById(req.params.id)
+      .populate('transactions.order', 'orderId status priceBreakup createdAt');
+
     if (!referral) return res.status(404).json({ message: 'Referral not found' });
 
-    referral.pendingPayout = Math.max(0, referral.pendingPayout - amount);
+    // Format the transactions for the frontend modal
+    const formattedTxns = referral.transactions.map(txn => ({
+      _id: txn._id, // The specific transaction sub-document ID
+      orderId: txn.order ? txn.order.orderId : 'Deleted Order',
+      orderStatus: txn.order ? txn.order.status : 'Unknown',
+      payoutStatus: txn.payoutStatus,
+      amount: txn.earnedAmount,
+      date: txn.date
+    }));
+
+    // Sort newest transactions first
+    formattedTxns.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.status(200).json(formattedTxns);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   PUT /api/admin/referrals/transactions/:transactionId/pay
+exports.markTransactionPaid = async (req, res) => {
+  try {
+    // 1. Find the referral that contains this specific transaction ID
+    const referral = await Referral.findOne({ "transactions._id": req.params.transactionId });
+    if (!referral) return res.status(404).json({ message: 'Transaction not found' });
+
+    // 2. Extract that specific transaction from the array
+    const txn = referral.transactions.id(req.params.transactionId);
+    
+    if (txn.payoutStatus === 'Paid') {
+      return res.status(400).json({ message: 'Transaction is already paid' });
+    }
+
+    // 3. Mark it as Paid and deduct the amount from the global Pending Payout
+    txn.payoutStatus = 'Paid';
+    referral.pendingPayout = Math.max(0, referral.pendingPayout - txn.earnedAmount);
+    
     await referral.save();
-    res.status(200).json(referral);
+
+    res.status(200).json({ 
+      message: 'Transaction marked as paid', 
+      pendingPayout: referral.pendingPayout 
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

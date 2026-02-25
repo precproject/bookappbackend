@@ -14,6 +14,7 @@ const orderSchema = new mongoose.Schema({
     shipping: { type: Number, required: true },
     discountCode: { type: String, default: null },
     discountAmount: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 }, // NEW FIELD
     referralApplied: { type: String, default: null },
     total: { type: Number, required: true }
   },

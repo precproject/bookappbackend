@@ -9,7 +9,10 @@ const {
   getAllReferrals, createReferral, markReferralPaid,
   getDiscounts, addDiscount, updateDiscount,
   updateOrderTransit,
-  deleteBook
+  deleteBook,
+  markTransactionPaid,
+  getReferralTransactions,
+  updateReferral
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
@@ -38,7 +41,9 @@ router.delete('/inventory/:id', deleteBook);
 // Referrals
 router.get('/referrals', getAllReferrals);
 router.post('/referrals', createReferral);
-router.put('/referrals/:id/mark-paid', markReferralPaid);
+router.put('/referrals/:id', updateReferral);
+router.get('/referrals/:id/transactions', getReferralTransactions);
+router.put('/referrals/transactions/:transactionId/pay', markTransactionPaid);
 
 // Discounts
 router.get('/discounts', getDiscounts);

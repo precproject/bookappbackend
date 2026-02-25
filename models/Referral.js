@@ -9,8 +9,14 @@ const referralSchema = new mongoose.Schema({
   pendingPayout: { type: Number, default: 0 },
   isDiscountLinked: { type: Boolean, default: false },
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
-  // ADDED: This tracks which orders successfully used this code
-  transactions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }] 
+  
+  // MODIFIED: Tracks specific details about each referral usage
+  transactions: [{ 
+    order: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
+    earnedAmount: { type: Number, required: true },
+    payoutStatus: { type: String, enum: ['Pending', 'Paid'], default: 'Pending' },
+    date: { type: Date, default: Date.now }
+  }] 
 }, { timestamps: true });
 
 module.exports = mongoose.model('Referral', referralSchema);

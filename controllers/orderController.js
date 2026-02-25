@@ -10,13 +10,13 @@ const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 
 // @route   POST /api/orders/checkout
-// @desc    Create new order & return payment gateway payload
+// @desc    Create new order securely & return payment gateway payload
 exports.createOrder = async (req, res) => {
   try {
     const { orderItems, shippingAddress, discountCode, referralCode } = req.body;
 
     if (!orderItems || orderItems.length === 0) {
-      return res.status(400).json({ message: 'No order items' });
+      return res.status(400).json({ message: 'No order items provided' });
     }
 
     let subtotal = 0;
@@ -46,14 +46,12 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    // 2. Shipping Logic (e.g., ₹50 flat rate for physical, free for digital)
-    const shipping = hasPhysicalItem ? 50 : 0;
-    let total = subtotal + shipping;
-    
-    // 3. Discount Logic
+    // 2. Discount & Referral Logic
     let discountAmount = 0;
     let appliedDiscountCode = null;
+    let appliedReferral = null;
 
+    // Check Standard Discount First
     if (discountCode) {
       const discount = await Discount.findOne({ code: discountCode.toUpperCase(), status: 'Active' });
       
@@ -67,14 +65,14 @@ exports.createOrder = async (req, res) => {
           return res.status(400).json({ message: 'Discount code usage limit reached' });
         }
 
+        // Calculate
         if (discount.type === 'Percentage') {
           const calcDiscount = (subtotal * discount.value) / 100;
-          discountAmount = Math.min(calcDiscount, discount.maxDiscount);
+          discountAmount = Math.min(calcDiscount, discount.maxDiscount || calcDiscount);
         } else {
           discountAmount = discount.value;
         }
         
-        total -= discountAmount;
         appliedDiscountCode = discount.code;
         
         // Increment usage
@@ -83,41 +81,52 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // 4. Referral Logic (If used instead of or alongside discount)
-    let appliedReferral = null;
-    if (referralCode && !appliedDiscountCode) { // Assuming they can't use both, or adjust as needed
+    // If no standard discount, check Referral Code (if it acts as a discount)
+    if (referralCode && !appliedDiscountCode) {
       const referral = await Referral.findOne({ code: referralCode.toUpperCase(), status: 'Active' }).populate('user', 'name');
       if (referral) {
         appliedReferral = {
           code: referral.code,
-          referrerName: referral.user.name
+          referrerName: referral.user ? referral.user.name : 'User'
         };
-        // Note: We don't credit the referrer until payment is SUCCESSFUL (handled in webhook)
         
-        // If referral also acts as a discount
+        // If this referral is configured to give the buyer a discount
         if (referral.isDiscountLinked) {
-            const refDiscount = 50; // Example flat ₹50 off for using referral
-            discountAmount = refDiscount;
-            total -= discountAmount;
+          // Prevent discount from being higher than the subtotal itself
+          discountAmount = Math.min(referral.rewardRate, subtotal); 
         }
       }
     }
 
-    // 5. Generate Unique Order ID
+    // 3. Tax and Shipping Calculations
+    const taxableAmount = Math.max(0, subtotal - discountAmount);
+    
+    // 5% GST Calculation
+    const taxRate = 0.05; 
+    const taxAmount = Math.round(taxableAmount * taxRate);
+    
+    // ₹50 flat rate for physical, free for digital
+    const shipping = hasPhysicalItem ? 50 : 0; 
+    
+    // Final Total
+    const finalTotal = Math.round(taxableAmount + taxAmount + shipping);
+
+    // 4. Generate Unique Order ID
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
-    // 6. Create the Order in Database
+    // 5. Create the Order in Database
     const order = await Order.create({
       orderId: uniqueOrderId,
       user: req.user._id, // From authMiddleware
       items: itemsForDB,
       priceBreakup: {
-        subtotal,
-        shipping,
+        subtotal: subtotal,
+        shipping: shipping,
         discountCode: appliedDiscountCode,
-        discountAmount: -discountAmount,
+        discountAmount: discountAmount,
+        taxAmount: taxAmount,
         referralApplied: appliedReferral ? appliedReferral.code : null,
-        total: Math.max(0, total) // Prevent negative totals
+        total: finalTotal
       },
       shipping: {
         address: hasPhysicalItem ? shippingAddress : 'Digital Delivery',
@@ -127,28 +136,43 @@ exports.createOrder = async (req, res) => {
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
 
-    await sendEmail({ to: req.user.email, subject: `Order Initiated - #${order.orderId}`, html: templates.orderPlacedEmail(order, req.user.name) });
+    // Send Initiation Email (Non-blocking)
+    sendEmail({ to: req.user.email, subject: `Order Initiated - #${order.orderId}`, html: templates.orderPlacedEmail(order, req.user.name) }).catch(err => console.log("Email error:", err));
     
-    // 7. Generate Payment Gateway Payload (Example for PhonePe)
-    // In a real app, you would construct the base64 payload and X-VERIFY checksum here
+    // 6. Generate Payment Gateway Payload
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
-    const payConfig = config ? config.payment : null; // <-- This variable was missing!
-    // Fallback to env if DB config is empty (great for testing)
+    const payConfig = config ? config.payment : null; 
+    
     const merchantId = payConfig?.merchantId || process.env.PHONEPE_MERCHANT_ID;
 
     if (!merchantId) {
       return res.status(500).json({ message: 'Payment gateway is not configured by Admin yet.' });
     }
 
-    // Fallbacks for frontend/api URLs in case env vars aren't loaded locally yet
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
     
+    // Auto-bypass gateway if final total is ₹0 (100% discount)
+    if (finalTotal === 0) {
+      order.status = 'In Progress';
+      order.payment.status = 'Success';
+      order.payment.method = '100% Discount';
+      await order.save();
+      
+      return res.status(201).json({
+        success: true,
+        orderId: order.orderId,
+        totalAmount: 0,
+        paymentPayload: { redirectUrl: `${frontendUrl}/payment-status/${order.orderId}` }
+      });
+    }
+
+    // Normal Payment Payload
     const paymentPayload = {
       merchantId: merchantId,
       merchantTransactionId: order.orderId,
       merchantUserId: req.user._id.toString(),
-      amount: order.priceBreakup.total * 100, // PhonePe accepts amount in paise
+      amount: finalTotal * 100, // PhonePe accepts amount in paise
       redirectUrl: `${frontendUrl}/payment-status/${order.orderId}`,
       redirectMode: "REDIRECT",
       callbackUrl: `${apiUrl}/api/webhooks/phonepe`,
@@ -159,8 +183,8 @@ exports.createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       orderId: order.orderId,
-      totalAmount: order.priceBreakup.total,
-      paymentPayload // Send this to React to open the payment gateway
+      totalAmount: finalTotal,
+      paymentPayload 
     });
 
   } catch (error) {
@@ -194,6 +218,11 @@ exports.verifyPaymentStatus = async (req, res) => {
       return res.status(200).json({ status: order.status, paymentStatus: order.payment.status });
     }
 
+    // 0 Amount bypass check
+    if (order.priceBreakup.total === 0) {
+        return res.status(200).json({ status: 'In Progress', paymentStatus: 'Success' });
+    }
+
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
     const payConfig = config ? config.payment : null;
 
@@ -222,7 +251,7 @@ exports.verifyPaymentStatus = async (req, res) => {
         order.payment.txnId = data.transactionId;
         order.transitHistory.push({ stage: 'Payment Verified (Manual Sync)', time: Date.now(), completed: true });
         
-        // Deduct inventory
+        // Deduct inventory securely
         for (const item of order.items) {
           const book = await Book.findById(item.book);
           if (book && book.type === 'Physical' && book.stock > 0) {
@@ -231,6 +260,24 @@ exports.verifyPaymentStatus = async (req, res) => {
             await book.save();
           }
         }
+
+        // Add to Referral Transactions if referral was used
+        if (order.priceBreakup.referralApplied) {
+            const refDoc = await Referral.findOne({ code: order.priceBreakup.referralApplied });
+            if (refDoc) {
+                refDoc.uses += 1;
+                refDoc.totalEarned += refDoc.rewardRate;
+                refDoc.pendingPayout += refDoc.rewardRate;
+                refDoc.transactions.push({
+                    order: order._id,
+                    earnedAmount: refDoc.rewardRate,
+                    payoutStatus: 'Pending',
+                    date: Date.now()
+                });
+                await refDoc.save();
+            }
+        }
+
       } else if (code === 'PAYMENT_ERROR' || code === 'PAYMENT_DECLINED') {
         order.status = 'Failed';
         order.payment.status = 'Failed';
@@ -240,7 +287,6 @@ exports.verifyPaymentStatus = async (req, res) => {
       return res.status(200).json({ status: order.status, paymentStatus: order.payment.status, code });
 
     } catch (apiError) {
-      // If PhonePe returns 400/401/404, the payment was never initiated properly or keys are fake
       order.status = 'Failed';
       order.payment.status = 'Failed';
       await order.save();
@@ -263,7 +309,6 @@ exports.retryPayment = async (req, res) => {
       return res.status(400).json({ message: 'Order is not pending payment' });
     }
 
-    // Get dynamic config
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
     const payConfig = config ? config.payment : null;
     const merchantId = payConfig?.merchantId || process.env.PHONEPE_MERCHANT_ID;
@@ -273,9 +318,9 @@ exports.retryPayment = async (req, res) => {
 
     const paymentPayload = {
       merchantId: merchantId,
-      merchantTransactionId: order.orderId, // Use the SAME order ID
+      merchantTransactionId: order.orderId, 
       merchantUserId: req.user._id.toString(),
-      amount: order.priceBreakup.total * 100,
+      amount: order.priceBreakup.total * 100, // Important: using the securely saved total
       redirectUrl: `${frontendUrl}/payment-status/${order.orderId}`,
       redirectMode: "REDIRECT",
       callbackUrl: `${apiUrl}/api/webhooks/phonepe`,

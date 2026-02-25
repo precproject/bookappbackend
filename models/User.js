@@ -9,6 +9,14 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['Customer', 'Admin'], default: 'Customer' },
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   referralCode: { type: String, unique: true, sparse: true }, 
+  addresses: [{
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    street: { type: String, required: true },
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    pincode: { type: String, required: true }
+  }],
 }, { timestamps: true });
 
 // Hash password before saving (FIXED: removed 'next' callback for async hook)
