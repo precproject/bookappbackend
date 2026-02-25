@@ -14,7 +14,7 @@ exports.getDashboardStats = async (req, res) => {
     const inProgressDeliveries = await Order.countDocuments({ status: 'In Progress' });
     
     const successfulOrders = await Order.find({ status: 'Success' });
-    const totalEarnings = successfulOrders.reduce((acc, order) => acc + order.priceBreakup.total, 0);
+    const totalEarnings = successfulOrders.reduce((acc, order) => acc + (order.priceBreakup?.total || 0), 0);
 
     const pendingPayments = await Order.find({ status: 'Pending Payment' })
       .populate('user', 'email')
@@ -42,11 +42,61 @@ exports.getDashboardStats = async (req, res) => {
 // @route   GET /api/admin/orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const orders = await Order.find()
+    
+    const { page = 1, limit = 10, search = '', status, paymentStatus, isDeliveryView } = req.query;
+    let query = {};
+
+    // 1. Handle Status Filters
+    if (status) query.status = status;
+    if (paymentStatus) query['payment.status'] = paymentStatus;
+    
+    // Deliveries dashboard only wants shipped/delivered items
+    if (isDeliveryView === 'true') {
+      query.status = { $in: ['In Progress', 'Delivered'] };
+    }
+
+    // 2. Handle Search (Order ID or finding User by name/email)
+    if (search) {
+      // First, find users matching the search query
+      const matchingUsers = await User.find({
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { mobile: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id');
+      
+      const userIds = matchingUsers.map(u => u._id);
+
+      // Then find orders that match the orderId OR belong to those users
+      query.$or = [
+        { orderId: { $regex: search, $options: 'i' } },
+        { user: { $in: userIds } },
+        { 'payment.transactionId': { $regex: search, $options: 'i' } }, // Search by Txn ID for payments page
+        { 'shipping.trackingId': { $regex: search, $options: 'i' } }    // Search by Tracking ID for deliveries
+      ];
+    }
+
+    // 3. Pagination Math
+    const skip = (Number(page) - 1) * Number(limit);
+    const totalItems = await Order.countDocuments(query);
+
+    // 4. Execute Query
+    const orders = await Order.find(query)
       .populate('user', 'name email mobile')
       .populate('items.book', 'title type')
-      .sort({ createdAt: -1 });
-    res.status(200).json(orders);
+      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    // Return exact format frontend expects
+    res.status(200).json({
+      orders,
+      totalItems,
+      totalPages: Math.ceil(totalItems / Number(limit))
+    });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -55,14 +105,12 @@ exports.getAllOrders = async (req, res) => {
 // @route   PUT /api/admin/orders/:id/status
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status, partner, trackingId } = req.body;
+    const { status } = req.body;
     const order = await Order.findById(req.params.id);
 
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    order.status = status || order.status;
-    if (partner) order.shipping.partner = partner;
-    if (trackingId) order.shipping.trackingId = trackingId;
+    order.status = status;
 
     await order.save();
     res.status(200).json(order);
@@ -71,12 +119,56 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
+// @route   POST /api/admin/orders/:id/transit
+exports.updateOrderTransit = async (req, res) => {
+  try {
+    const { partner, trackingId, stage } = req.body;
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    if (partner) order.shipping.partner = partner;
+    if (trackingId) order.shipping.trackingId = trackingId;
+    
+    // Add to transit history
+    if (stage) {
+      order.transitHistory.push({ stage, timestamp: new Date() });
+    }
+
+    await order.save();
+    res.status(200).json({ message: 'Transit updated', order });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
 // --- USERS ---
 // @route   GET /api/admin/users
 exports.getAllUsers = async (req, res) => {
   try {
+    
+    const { page = 1, limit = 10, search = '' } = req.query;
+    
+    // 1. Match Stage (Search Filter)
+    let matchStage = {};
+    if (search) {
+      matchStage.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { mobile: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const totalItems = await User.countDocuments(matchStage);
+
+    // 2. Aggregation Pipeline
     // Uses aggregation to get users and their total order counts/spent in one call
     const users = await User.aggregate([
+      { $match: matchStage },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: Number(limit) },
       {
         $lookup: {
           from: 'orders',
@@ -87,7 +179,7 @@ exports.getAllUsers = async (req, res) => {
       },
       {
         $project: {
-          name: 1, email: 1, mobile: 1, role: 1, status: 1, createdAt: 1,
+          name: 1, email: 1, mobile: 1, role: 1, status: 1, createdAt: 1, referralCode: 1,
           ordersCount: { $size: "$orders" },
           spent: { 
             $sum: {
@@ -99,10 +191,17 @@ exports.getAllUsers = async (req, res) => {
             }
           }
         }
-      },
-      { $sort: { createdAt: -1 } }
+      }
     ]);
-    res.status(200).json(users);
+    
+
+    // Return properly formatted object for the frontend
+    res.status(200).json({
+      users,
+      totalItems,
+      totalPages: Math.ceil(totalItems / Number(limit))
+    });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -127,7 +226,17 @@ exports.toggleUserStatus = async (req, res) => {
 // @route   GET /api/admin/inventory
 exports.getInventory = async (req, res) => {
   try {
-    const books = await Book.find().sort({ createdAt: -1 });
+    const { search = '' } = req.query;
+    let query = {};
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { sku: { $regex: search, $options: 'i' } },
+      ];
+    }
+    // Frontend expects just an array for inventory
+    const books = await Book.find(query).sort({ createdAt: -1 });
+
     res.status(200).json(books);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -176,12 +285,51 @@ exports.updateBook = async (req, res) => {
   }
 };
 
+// @route   DELETE /api/admin/inventory/:id
+exports.deleteBook = async (req, res) => {
+  try {
+    await Book.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Inventory item removed' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+  
+
 // --- REFERRALS ---
 // @route   GET /api/admin/referrals
 exports.getAllReferrals = async (req, res) => {
   try {
-    const referrals = await Referral.find().populate('user', 'name').populate('transactions', 'orderId status priceBreakup.total createdAt');
-    res.status(200).json(referrals);
+    const { page = 1, limit = 10, search = '' } = req.query;
+    let query = {};
+    if (search) {
+      query.code = { $regex: search, $options: 'i' };
+    }
+    const skip = (Number(page) - 1) * Number(limit);
+    const totalItems = await Referral.countDocuments(query);
+    
+    const referrals = await Referral.find(query)
+      .populate('userId', 'name') // Assuming schema uses userId ref
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    // Calculate global stats for the header
+    const allRefs = await Referral.find();
+    let totalEarned = 0;
+    let totalPending = 0;
+    allRefs.forEach(r => {
+      totalEarned += (r.earned || 0);
+      totalPending += (r.pending || 0);
+    });
+
+    res.status(200).json({
+      referrals,
+      stats: { totalEarned, totalPending },
+      totalItems,
+      totalPages: Math.ceil(totalItems / Number(limit))
+    });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -216,7 +364,13 @@ exports.markReferralPaid = async (req, res) => {
 // @route   GET /api/admin/discounts
 exports.getDiscounts = async (req, res) => {
   try {
-    const discounts = await Discount.find().sort({ createdAt: -1 });
+    const { search = '' } = req.query;
+    let query = {};
+    if (search) {
+      query.code = { $regex: search, $options: 'i' };
+    }
+    const discounts = await Discount.find(query).sort({ createdAt: -1 });
+
     res.status(200).json(discounts);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -243,7 +397,9 @@ exports.updateDiscount = async (req, res) => {
   }
 };
 
-// @route   GET /api/admin/settings
+// --- SYSTEM CONFIG ---
+// @route   GET /api/admin/config
+
 exports.getSettings = async (req, res) => {
   try {
     let config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
@@ -252,15 +408,20 @@ exports.getSettings = async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
+
 };
 
-// @route   PUT /api/admin/settings
+// @route   PUT /api/admin/config/:section
 exports.updateSettings = async (req, res) => {
   try {
-    const { general, payment, delivery } = req.body;
+    const { section } = req.params; // 'general', 'payment', 'delivery', 'dynamic'
+    const updateData = req.body;
+
+    // Use $set to only update the specific object (e.g., config.payment) without touching the rest
+
     const config = await Config.findOneAndUpdate(
       { singletonId: 'SYSTEM_CONFIG' },
-      { $set: { general, payment, delivery } },
+      { $set: { [section]: updateData } },
       { new: true, upsert: true }
     );
     res.status(200).json({ message: 'Settings updated successfully', config });

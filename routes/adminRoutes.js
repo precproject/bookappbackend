@@ -7,7 +7,9 @@ const {
   getAllUsers, toggleUserStatus,
   getInventory, addBook, updateBook,
   getAllReferrals, createReferral, markReferralPaid,
-  getDiscounts, addDiscount, updateDiscount
+  getDiscounts, addDiscount, updateDiscount,
+  updateOrderTransit,
+  deleteBook
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
@@ -21,6 +23,7 @@ router.get('/dashboard/stats', getDashboardStats);
 // Orders
 router.get('/orders', getAllOrders);
 router.put('/orders/:id/status', updateOrderStatus);
+router.post('/orders/:id/transit', updateOrderTransit); // Used by Delivery
 
 // Users
 router.get('/users', getAllUsers);
@@ -30,6 +33,7 @@ router.put('/users/:id/toggle-status', toggleUserStatus);
 router.get('/inventory', getInventory);
 router.post('/inventory', addBook);
 router.put('/inventory/:id', updateBook);
+router.delete('/inventory/:id', deleteBook);
 
 // Referrals
 router.get('/referrals', getAllReferrals);
@@ -44,5 +48,8 @@ router.put('/discounts/:id', updateDiscount);
 // Add under existing routes
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
+
+router.get('/config', getSettings);
+router.put('/config/:section', updateSettings); // <-- Matches frontend updateConfig('general', data)
 
 module.exports = router;
