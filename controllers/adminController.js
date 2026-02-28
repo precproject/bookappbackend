@@ -490,9 +490,46 @@ exports.addDiscount = async (req, res) => {
 };
 
 // @route   PUT /api/admin/discounts/:id
+// @desc    Update discount and auto-calculate expiration status
 exports.updateDiscount = async (req, res) => {
   try {
-    const discount = await Discount.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // 1. Fetch the existing discount
+    const discount = await Discount.findById(req.params.id);
+    if (!discount) {
+      return res.status(404).json({ message: 'Discount not found' });
+    }
+
+    // 2. Apply all new updates from the frontend (date, limits, etc.)
+    Object.assign(discount, req.body);
+
+    // 3. Auto-evaluate if it should be Active or Expired
+    const now = new Date();
+    let isStillValid = true;
+
+    // Check Date Expiration
+    if (discount.validTill && new Date(discount.validTill) <= now) {
+      isStillValid = false;
+    }
+    
+    // Check Usage Limit Expiration
+    if (discount.maxUsage && discount.currentUsage >= discount.maxUsage) {
+      isStillValid = false;
+    }
+
+    // 4. Smart Status Overrides
+    if (isStillValid && discount.status === 'Expired') {
+      // If the admin extended the date/usage limit, automatically wake it back up!
+      discount.status = 'Active';
+    } else if (!isStillValid && discount.status === 'Active') {
+      // If the admin backdated it or lowered the limit below current usage, expire it.
+      discount.status = 'Expired';
+    }
+    // Note: If the status is manually set to 'Inactive' (paused) by the admin, 
+    // this logic respects that and won't force it to 'Active'.
+
+    // 5. Save the smartly updated document
+    await discount.save();
+
     res.status(200).json(discount);
   } catch (error) {
     res.status(500).json({ message: error.message });

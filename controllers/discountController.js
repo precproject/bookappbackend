@@ -16,7 +16,7 @@ exports.validatePromo = async (req, res) => {
 
     if (discount) {
       // Check expiration
-      if (discount.validTill && new Date(discount.validTill) < new Date()) {
+      if (discount.validTill && new Date(discount.validTill) <= new Date()) {
         discount.status = 'Expired';
         await discount.save();
         return res.status(400).json({ message: 'This code has expired' });
