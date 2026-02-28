@@ -42,9 +42,14 @@ exports.getDashboardStats = async (req, res) => {
 // @route   GET /api/admin/orders
 exports.getAllOrders = async (req, res) => {
   try {
-    
-    const { page = 1, limit = 10, search = '', status, paymentStatus, isDeliveryView } = req.query;
+    // FIX 1: Extract userId from req.query
+    const { page = 1, limit = 10, search = '', status, paymentStatus, isDeliveryView, userId } = req.query;
     let query = {};
+
+    // FIX 2: If userId is provided in the URL, filter orders by this specific user
+    if (userId) {
+      query.user = userId;
+    }
 
     // 1. Handle Status Filters
     if (status) query.status = status;
@@ -58,6 +63,7 @@ exports.getAllOrders = async (req, res) => {
     // 2. Handle Search (Order ID or finding User by name/email)
     if (search) {
       // First, find users matching the search query
+      const User = require('../models/User'); // Ensure User model is accessible
       const matchingUsers = await User.find({
         $or: [
           { name: { $regex: search, $options: 'i' } },
@@ -85,8 +91,7 @@ exports.getAllOrders = async (req, res) => {
     const orders = await Order.find(query)
       .populate('user', 'name email mobile')
       .populate('items.book', 'title type')
-      .sort({ createdAt: -1 })
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1 }) // FIX 3: Removed the duplicate sort
       .skip(skip)
       .limit(Number(limit));
 
