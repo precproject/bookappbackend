@@ -5,6 +5,7 @@ const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/addresses', protect, userController.getAddresses);
 router.post('/addresses', protect, userController.addAddress);
+router.delete('/addresses/:id', protect, userController.deleteAddress);
 router.get('/cart', protect, userController.getCart);
 router.put('/cart', protect, userController.updateCart);
 

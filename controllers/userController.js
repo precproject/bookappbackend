@@ -60,6 +60,25 @@ exports.addAddress = async (req, res) => {
   }
 };
 
+// @route   DELETE /api/user/addresses/:id
+// @desc    Remove an address from user profile
+exports.deleteAddress = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Filter out the address either by its MongoDB _id or by array index
+    user.addresses = user.addresses.filter((addr, index) => 
+      addr._id.toString() !== req.params.id && index.toString() !== req.params.id
+    );
+
+    await user.save();
+    res.status(200).json({ message: 'Address removed', addresses: user.addresses });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to delete address' });
+  }
+};
+
 // GET /api/user/cart
 exports.getCart = async (req, res) => {
   try {
