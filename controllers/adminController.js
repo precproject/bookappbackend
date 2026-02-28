@@ -363,19 +363,36 @@ exports.getAllReferrals = async (req, res) => {
 // @route   POST /api/admin/referrals
 exports.createReferral = async (req, res) => {
   try {
-    const { code, userId, rate, isDiscountLinked, status } = req.body;
+    const { code, userId, rate, isDiscountLinked, status, discountDetails } = req.body;
+    const upperCode = code.toUpperCase();
 
-    // Create the referral using the backend schema mappings
+    // 1. Create the referral using the backend schema mappings
     const referral = await Referral.create({
-      code: code.toUpperCase(),
-      user: userId,               // Frontend sends userId, backend needs user
-      rewardRate: rate,           // Frontend sends rate, backend needs rewardRate
+      code: upperCode,
+      user: userId,               
+      rewardRate: rate,           
       isDiscountLinked,
       status
     });
 
-    // Optionally: Update the User document so the user knows their code
-    await User.findByIdAndUpdate(userId, { referralCode: code.toUpperCase() });
+    // 2. If it acts as a discount, automatically create the Discount document
+    if (isDiscountLinked && discountDetails) {
+      await Discount.findOneAndUpdate(
+        { code: upperCode },
+        {
+          code: upperCode,
+          type: discountDetails.type,
+          value: discountDetails.value,
+          maxUsage: discountDetails.maxUsage || null,
+          validTill: discountDetails.validTill ? new Date(discountDetails.validTill) : null,
+          status: status === 'Active' ? 'Active' : 'Expired' // Keep sync with referral status
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    // 3. Update the User document so the user knows their code
+    await User.findByIdAndUpdate(userId, { referralCode: upperCode });
 
     res.status(201).json(referral);
   } catch (error) {
@@ -390,12 +407,14 @@ exports.createReferral = async (req, res) => {
 // @route   PUT /api/admin/referrals/:id
 exports.updateReferral = async (req, res) => {
   try {
-    const { code, rate, isDiscountLinked, status } = req.body;
+    const { code, rate, isDiscountLinked, status, discountDetails } = req.body;
+    const upperCode = code.toUpperCase();
 
+    // 1. Update the Referral Document
     const referral = await Referral.findByIdAndUpdate(
       req.params.id,
       { 
-        code: code.toUpperCase(), 
+        code: upperCode, 
         rewardRate: rate, 
         isDiscountLinked, 
         status 
@@ -404,8 +423,36 @@ exports.updateReferral = async (req, res) => {
     );
 
     if (!referral) return res.status(404).json({ message: 'Referral not found' });
+
+    // 2. Sync the Discount Document
+    if (isDiscountLinked && discountDetails) {
+      // Create or update the parallel discount code
+      await Discount.findOneAndUpdate(
+        { code: upperCode },
+        {
+          code: upperCode,
+          type: discountDetails.type,
+          value: discountDetails.value,
+          maxUsage: discountDetails.maxUsage || null,
+          validTill: discountDetails.validTill ? new Date(discountDetails.validTill) : null,
+          status: status === 'Active' ? 'Active' : 'Expired' // Disable discount if referral is suspended
+        },
+        { upsert: true, new: true }
+      );
+    } else if (!isDiscountLinked) {
+      // FAILSAFE: If the admin turned OFF the discount link, disable the discount code!
+      await Discount.findOneAndUpdate(
+        { code: upperCode },
+        { status: 'Expired' } // Expired/Inactive prevents buyers from using it
+      );
+    }
+
     res.status(200).json(referral);
   } catch (error) {
+    // Check for duplicate code error if they changed the code string
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'This referral code is already taken.' });
+    }
     res.status(500).json({ message: error.message });
   }
 };
@@ -569,6 +616,27 @@ exports.updateSettings = async (req, res) => {
       { new: true, upsert: true }
     );
     res.status(200).json({ message: 'Settings updated successfully', config });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Backend: controllers/adminController.js
+
+exports.createUser = async (req, res) => {
+  try {
+    const { name, email, mobile, password } = req.body;
+    
+    // Check if user already exists
+    const userExists = await User.findOne({ $or: [{ email }, { mobile }] });
+    if (userExists) {
+      return res.status(400).json({ message: 'User with this email or mobile already exists' });
+    }
+
+    // Create user (assuming your User model hashes the password in a pre-save hook)
+    const user = await User.create({ name, email, mobile, password });
+    
+    res.status(201).json({ user });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -12,7 +12,8 @@ const {
   deleteBook,
   markTransactionPaid,
   getReferralTransactions,
-  updateReferral
+  updateReferral,
+  createUser
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
@@ -29,6 +30,7 @@ router.put('/orders/:id/status', updateOrderStatus);
 router.post('/orders/:id/transit', updateOrderTransit); // Used by Delivery
 
 // Users
+router.post('/users', createUser);
 router.get('/users', getAllUsers);
 router.put('/users/:id/toggle-status', toggleUserStatus);
 
