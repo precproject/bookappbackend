@@ -22,13 +22,39 @@ exports.addAddress = async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
+    // Ensure the user has an addresses list to look through
+    if (!user.addresses) {
+      user.addresses = [];
+    }
+
+    // Flip through the diary to check if this exact address is already written down
+    const isDuplicate = user.addresses.some((addr) => {
+      return (
+        addr.street.trim().toLowerCase() === street.trim().toLowerCase() &&
+        addr.city.trim().toLowerCase() === city.trim().toLowerCase() &&
+        addr.pincode.trim() === pincode.trim()
+      );
+    });
+
+    // If we already have it, just say success and return what we have
+    if (isDuplicate) {
+      return res.status(200).json({ 
+        message: 'Address already exists', 
+        addresses: user.addresses 
+      });
+    }
+
+    // If we couldn't find it, it's a new house! Let's write it down.
     const newAddress = { fullName, phone, street, city, state, pincode };
     
-    // Add to the beginning of the array
+    // Add to the top of the list
     user.addresses.unshift(newAddress);
     await user.save();
 
-    res.status(201).json({ message: 'Address saved successfully', addresses: user.addresses });
+    res.status(201).json({ 
+      message: 'Address saved successfully', 
+      addresses: user.addresses 
+    });
   } catch (error) {
     res.status(500).json({ message: 'Failed to save address', error: error.message });
   }

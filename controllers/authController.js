@@ -28,7 +28,7 @@ exports.registerUser = async (req, res) => {
       status: 'Active'
     });
 
-    await sendEmail({ to: user.email, subject: `Welcome to ${process.env.STORE_NAME}`, html: templates.welcomeEmail(user.name) });
+    sendEmail({ to: user.email, subject: `Welcome to ${process.env.STORE_NAME}`, html: templates.welcomeEmail(user.name) }).catch(console.error);
 
     res.status(201).json({
       _id: user._id,

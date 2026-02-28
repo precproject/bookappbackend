@@ -3,6 +3,8 @@ const Order = require('../models/Order');
 const Book = require('../models/Book');
 const Referral = require('../models/Referral');
 const Config = require('../models/Config'); // <-- Added Config Import
+const sendEmail = require('../utils/sendEmail');
+const templates = require('../utils/emailTemplates');
 
 // @route   POST /api/webhooks/phonepe
 // @desc    Receive payment update from PhonePe
@@ -76,7 +78,7 @@ exports.phonepeWebhook = async (req, res) => {
 
       // Inside the PAYMENT_SUCCESS block, populate user to get email:
       const populatedOrder = await Order.findById(order._id).populate('user', 'name email');
-      await sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) });
+      sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) }).catch(console.error).catch(console.error);
 
     } else {
       order.status = 'Failed';
@@ -131,11 +133,11 @@ exports.deliveryWebhook = async (req, res) => {
 
     const populatedOrder = await Order.findById(order._id).populate('user', 'email');
     if (mappedStage === 'Delivered') {
-      await sendEmail({ to: populatedOrder.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) });
+      sendEmail({ to: populatedOrder.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) });
     } else if (mappedStage.includes('Transit')) {
       // Check if it's the FIRST transit update to avoid spamming
       if (order.transitHistory.length === 2) { 
-        await sendEmail({ to: populatedOrder.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) });
+        sendEmail({ to: populatedOrder.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
       }
     }
 

@@ -13,7 +13,8 @@ const sendEmail = async ({ to, subject, html }) => {
     });
 
     const mailOptions = {
-      from: `"SahakarStree Support"`,
+      // FIX: Added the actual email address inside the angle brackets < >
+      from: `"SahakarStree Support" <${process.env.RESEND_FROM_EMAIL || 'support@sahakarstree.com'}>`,
       to,
       subject,
       html,
