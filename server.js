@@ -93,6 +93,7 @@ app.use('/api/orders', require('./routes/orderRoutes')); // <-- ADDED THIS
 app.use('/api/public', require('./routes/publicRoutes'));
 app.use('/api/discounts', require('./routes/discountRoutes'));
 app.use('/api/user', require('./routes/userRoutes'));
+app.use('/api/blogs', require('./routes/blogRoutes'));
 
 
 // Global Error Handler

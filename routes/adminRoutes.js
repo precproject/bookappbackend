@@ -17,6 +17,7 @@ const {
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
+const { createBlog, updateBlog, deleteBlog } = require('../controllers/blogController');
 
 // All routes require login AND admin privileges
 router.use(protect, admin);
@@ -58,5 +59,10 @@ router.put('/settings', updateSettings);
 
 router.get('/config', getSettings);
 router.put('/config/:section', updateSettings); // <-- Matches frontend updateConfig('general', data)
+
+// Blog
+router.post('/blogs', createBlog);
+router.put('/blogs/:id', updateBlog);
+router.delete('/blogs/:id', deleteBlog);
 
 module.exports = router;
