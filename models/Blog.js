@@ -70,6 +70,11 @@ const blogSchema = new mongoose.Schema(
     publishedAt: {
       type: Date,
       default: Date.now
+    },
+    type: { 
+      type: String, 
+      enum: ['text', 'video', 'audio'], 
+      default: 'text' 
     }
   },
   {
