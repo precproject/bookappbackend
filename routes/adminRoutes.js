@@ -18,6 +18,7 @@ const {
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
 const { createBlog, updateBlog, deleteBlog } = require('../controllers/blogController');
+const { getConfig, updateConfig } = require('../controllers/configController');
 
 // All routes require login AND admin privileges
 router.use(protect, admin);
@@ -54,11 +55,15 @@ router.post('/discounts', addDiscount);
 router.put('/discounts/:id', updateDiscount);
 
 // Add under existing routes
-router.get('/settings', getSettings);
-router.put('/settings', updateSettings);
+// router.get('/settings', getSettings);
+// router.put('/settings', updateSettings);
 
-router.get('/config', getSettings);
-router.put('/config/:section', updateSettings); // <-- Matches frontend updateConfig('general', data)
+// router.get('/config', getSettings);
+// router.put('/config/:section', updateSettings); // <-- Matches frontend updateConfig('general', data)
+
+router.get('/config', getConfig);
+router.put('/config/:section', updateConfig); // <-- Matches frontend updateConfig('general', data)
+
 
 // Blog
 router.post('/blogs', createBlog);
