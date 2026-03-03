@@ -9,6 +9,7 @@ lerna-debug.log*
 # Dependencies
 node_modules/
 jspm_packages/
+public/
 
 # Environment Variables (CRITICAL: NEVER COMMIT THIS)
 .env
