@@ -2,35 +2,29 @@ const cron = require('node-cron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
-const axios = require('axios');
 const Order = require('../models/Order');
+const Book = require('../models/Book');
+const Referral = require('../models/Referral');
 const Config = require('../models/Config');
-
-// Helper to get dynamic PhonePe keys
-const getPaymentConfig = async () => {
-  const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
-  return config ? config.payment : null;
-};
+const PhonePeService = require('./phonepeService'); // Re-using your existing service!
 
 const startCronJobs = () => {
-  console.log('Cron Jobs Initialized.');
+  console.log('⏳ Store Manager (Cron Jobs) Initialized.');
 
   // ====================================================================
-  // JOB 1: AUTOMATED DATABASE BACKUP (Runs every day at 2:00 AM)
+  // JOB 1: THE NIGHTLY LEDGER PHOTOCOPY (Database Backup at 2:00 AM)
   // ====================================================================
   cron.schedule('0 2 * * *', () => {
-    console.log('[CRON] Starting Database Backup...');
+    console.log('[CRON] Starting Nightly Database Backup...');
     
-    // Ensure backups directory exists
     const backupDir = path.join(__dirname, '../backups');
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir);
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
     const date = new Date().toISOString().split('T')[0];
     const backupFile = path.join(backupDir, `backup-${date}.gzip`);
     const dbUri = process.env.MONGO_URI; 
 
-    // Uses MongoDB database tools to dump and compress
+    // Note: Your server needs 'mongodatabase-tools' installed for this to run
     const dumpCommand = `mongodump --uri="${dbUri}" --archive="${backupFile}" --gzip`;
 
     exec(dumpCommand, (error, stdout, stderr) => {
@@ -40,15 +34,18 @@ const startCronJobs = () => {
       }
       console.log(`[CRON] Backup Successful: ${backupFile}`);
 
-      // Cleanup old backups (keep last 7 days)
+      // Throw away copies older than 7 days so the server doesn't get full
       fs.readdir(backupDir, (err, files) => {
         if (err) return;
+        
+        const now = Date.now();
+        const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
+
         files.forEach(file => {
           const filePath = path.join(backupDir, file);
           const stat = fs.statSync(filePath);
-          const now = new Date().getTime();
-          const endTime = new Date(stat.ctime).getTime() + 7 * 24 * 60 * 60 * 1000; // 7 days
-          if (now > endTime) {
+          
+          if (stat.mtimeMs < sevenDaysAgo) {
             fs.unlinkSync(filePath);
             console.log(`[CRON] Deleted old backup: ${file}`);
           }
@@ -58,12 +55,12 @@ const startCronJobs = () => {
   });
 
   // ====================================================================
-  // JOB 2: PENDING PAYMENT SWEEPER (Runs every 15 minutes)
+  // JOB 2: THE CASHIER AUDIT (Pending Payment Sweeper - Every 15 mins)
   // ====================================================================
   cron.schedule('*/15 * * * *', async () => {
-    console.log('[CRON] Running Pending Payment Sweeper...');
+    console.log('[CRON] Running the Cashier Audit (Payment Sweeper)...');
     try {
-      // Find orders that have been 'Pending Payment' for more than 20 minutes
+      // Look for customers who have been standing at the billing counter for more than 20 mins
       const twentyMinsAgo = new Date(Date.now() - 20 * 60000);
       
       const pendingOrders = await Order.find({
@@ -73,60 +70,75 @@ const startCronJobs = () => {
 
       if (pendingOrders.length === 0) return;
 
-      const payConfig = await getPaymentConfig();
-      if (!payConfig || !payConfig.merchantId) {
-        console.error('[CRON] Cannot check payment status: Merchant ID missing in Config.');
+      // Get the current shop payment rules
+      const payEnv = await PhonePeService.getEnvConfig(Config);
+      if (!payEnv || !payEnv.merchantId) {
+        console.error('[CRON] Audit paused: Card machine (PhonePe) settings are missing.');
         return;
       }
 
-      // Base URL based on Environment mapped from .env
-      const baseUrl = payConfig.isLiveMode 
-        ? process.env.PHONEPE_LIVE_URL 
-        : process.env.PHONEPE_UAT_URL;
-
       for (let order of pendingOrders) {
-        // Construct standard PhonePe Check Status Checksum
-        // SHA256("/pg/v1/status/{merchantId}/{merchantTransactionId}" + saltKey) + "###" + saltIndex
-        const endpoint = `/pg/v1/status/${payConfig.merchantId}/${order.orderId}`;
-        const checksum = crypto.createHash('sha256').update(endpoint + payConfig.saltKey).digest('hex') + "###" + payConfig.saltIndex;
-
         try {
-          const response = await axios.get(`${baseUrl}${endpoint}`, {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-VERIFY': checksum,
-              'X-MERCHANT-ID': payConfig.merchantId
-            }
-          });
-
-          const { code, data } = response.data;
+          // Ask PhonePe: "Did this specific order ID actually go through?"
+          const { code, data } = await PhonePeService.checkStatus({ orderId: order.orderId, env: payEnv });
 
           if (code === 'PAYMENT_SUCCESS') {
-            console.log(`[CRON] Order ${order.orderId} was successful but missed webhook. Updating...`);
+            console.log(`[CRON] Found a lost successful payment for Order ${order.orderId}! Fixing it now...`);
+            
+            // 1. Update the receipt
             order.status = 'In Progress';
             order.payment.status = 'Success';
             if (data && data.transactionId) order.payment.txnId = data.transactionId;
+            order.payment.method = data.paymentInstrument?.type || 'Auto-Recovery';
             order.transitHistory.push({ stage: 'Payment Verified (Auto-Recovery)', time: Date.now(), completed: true });
             
-            // NOTE: In a full app, you'd also call the inventory deduction logic here.
-          } else if (code === 'PAYMENT_ERROR' || code === 'INTERNAL_SERVER_ERROR') {
-             // If phonepe explicitly says it failed
-             order.status = 'Failed';
+            // 2. CRITICAL: Take the book off the physical shelf!
+            for (const item of order.items) {
+              const book = await Book.findOne({ _id: item.book, type: 'Physical', stock: { $gte: item.qty } });
+              if (book) {
+                book.stock -= item.qty;
+                book.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId} (Auto-Recovered)`, change: -item.qty, balance: book.stock });
+                await book.save();
+              } else {
+                order.notes = (order.notes || '') + ` [System Note: Recovered payment, but book ran out of stock!]`;
+              }
+            }
+
+            // 3. Give the friend their referral reward
+            if (order.priceBreakup.referralApplied) {
+              const refDoc = await Referral.findOne({ code: order.priceBreakup.referralApplied });
+              if (refDoc) {
+                refDoc.uses += 1;
+                refDoc.totalEarned += refDoc.rewardRate;
+                refDoc.pendingPayout += refDoc.rewardRate;
+                refDoc.transactions.push({ order: order._id, earnedAmount: refDoc.rewardRate, payoutStatus: 'Pending', date: Date.now() });
+                await refDoc.save();
+              }
+            }
+
+          } else if (code === 'PAYMENT_ERROR' || code === 'PAYMENT_DECLINED') {
+             // The card declined. Mark it as failed.
+             order.status = 'Cancelled'; // User abandoned a failed payment
              order.payment.status = 'Failed';
+             order.notes = (order.notes || '') + ' [System Note: Payment officially failed on PhonePe.]';
           }
+          
           await order.save();
+
         } catch (apiError) {
-          // If 404, it means the user never even opened the PhonePe page. Expire the order.
+          // If PhonePe says "404 Not Found", it means the customer never even typed their UPI PIN. 
+          // They just closed the browser.
           if (apiError.response && apiError.response.status === 404) {
-            console.log(`[CRON] Order ${order.orderId} expired (user dropped off).`);
-            order.status = 'Failed';
+            console.log(`[CRON] Order ${order.orderId} was abandoned by the customer. Cancelling order.`);
+            order.status = 'Cancelled';
             order.payment.status = 'Failed';
+            order.notes = (order.notes || '') + ' [System Note: Customer abandoned checkout. Cancelled by Sweeper.]';
             await order.save();
           }
         }
       }
     } catch (error) {
-      console.error('[CRON] Payment Sweeper Error:', error);
+      console.error('[CRON] Cashier Audit ran into a problem:', error);
     }
   });
 };

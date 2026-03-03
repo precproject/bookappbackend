@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const initializeSystem = require('./utils/initApp'); // <-- NEW
 const startCronJobs = require('./utils/cronJobs');   // <-- NEW
+const path = require('path');
 
 // Load env vars
 dotenv.config();
@@ -45,6 +46,14 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Security & Middlewares
 app.use(helmet());
+
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
+  setHeaders: (res, path, stat) => {
+    // This tells the browser: "It is 100% safe to show this image on the React frontend!"
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.set('Access-Control-Allow-Origin', '*');
+  }
+}));
 
 // app.use(cors());
 app.use(cors({
@@ -95,7 +104,7 @@ app.use('/api/discounts', require('./routes/discountRoutes'));
 app.use('/api/user', require('./routes/userRoutes'));
 app.use('/api/blogs', require('./routes/blogRoutes'));
 app.use('/api/config', require('./routes/configRoutes'));
-
+app.use('/api/upload', require('./routes/uploadRoutes'));
 
 // Global Error Handler
 app.use((err, req, res, next) => {

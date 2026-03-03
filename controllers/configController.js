@@ -40,15 +40,29 @@ const updateConfig = async (req, res) => {
 // In controllers/configController.js
 const getPublicConfig = async (req, res) => {
   try {
-    // Stripping the exact keys from the updated schema
+    // Instead of hiding secrets (using minus signs), we specifically 
+    // pick ONLY the items the customer is allowed to see.
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' })
-      .select('-payment.saltKey -delivery.apiToken');
+      .select(`
+        general 
+        sections 
+        shoppingRules 
+        taxConfig.isGstEnabled 
+        taxConfig.gstPercentage 
+        delivery.shippingCharge 
+        socialLinks,
+        uiConfig.showRecentOrdersPopup
+        -_id
+      `);
 
-    if (!config) return res.status(404).json({ message: 'Configuration not found' });
+    if (!config) {
+      return res.status(404).json({ message: 'Configuration not found' });
+    }
 
     res.status(200).json(config);
   } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    console.error("Failed to fetch public config:", error);
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 

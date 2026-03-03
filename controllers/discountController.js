@@ -6,7 +6,12 @@ const Referral = require('../models/Referral');
 exports.validatePromo = async (req, res) => {
   try {
     const { code, subtotal } = req.body;
+    
+    // SAFETY CHECK 1: Ensure we have a code AND a valid, positive subtotal
     if (!code) return res.status(400).json({ message: 'Code is required' });
+    if (!subtotal || isNaN(subtotal) || subtotal <= 0) {
+      return res.status(400).json({ message: 'Invalid cart total' });
+    }
 
     const upperCode = code.toUpperCase();
 
@@ -33,7 +38,8 @@ exports.validatePromo = async (req, res) => {
         discountAmount = (subtotal * discount.value) / 100;
         if (discount.maxDiscount) discountAmount = Math.min(discountAmount, discount.maxDiscount);
       } else {
-        discountAmount = discount.value;
+        // SAFETY CHECK 2: Ensure a flat discount is never bigger than the cart total
+        discountAmount = Math.min(discount.value, subtotal);
       }
       
       return res.status(200).json({ discountAmount: Math.round(discountAmount) });
@@ -43,8 +49,16 @@ exports.validatePromo = async (req, res) => {
     const referral = await Referral.findOne({ code: upperCode, status: 'Active' });
     
     if (referral && referral.isDiscountLinked) {
+      
+      // SAFETY CHECK 3: Prevent a user from applying their own referral code
+      // (This assumes your route knows who is logged in via req.user)
+      if (req.user && referral.user.toString() === req.user._id.toString()) {
+        return res.status(400).json({ message: 'You cannot use your own referral code.' });
+      }
+
       // Apply the referral reward rate as a flat discount to the buyer
       discountAmount = referral.rewardRate;
+      
       // Ensure we don't discount more than the subtotal
       discountAmount = Math.min(discountAmount, subtotal);
       

@@ -19,10 +19,10 @@ const userSchema = new mongoose.Schema({
   }],
   cart: [{
     bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
-    name: String,
-    type: String,
-    price: Number,
-    qty: Number
+    name: { type: String },
+    type: { type: String }, // <-- This tells it: "Make a box literally named 'type', which holds text."
+    price: { type: Number },
+    qty: { type: Number }
   }],
 }, { timestamps: true });
 

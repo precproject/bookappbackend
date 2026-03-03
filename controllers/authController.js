@@ -2,10 +2,15 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
-
-// Helper to generate JWT Token
+const Config = require('../models/Config'); // <-- Add this at the top
+// Helper to generate JWT Token and calculate expiration time
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '2d' });
+  const expiresInDays = 2;
+  const expiresInMinutes = expiresInDays * 24 * 60; // 2880 minutes
+  
+  const token = jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: `${expiresInDays}d` });
+  
+  return { token, expiresInMinutes };
 };
 
 // @route   POST /api/auth/register
@@ -28,7 +33,20 @@ exports.registerUser = async (req, res) => {
       status: 'Active'
     });
 
-    sendEmail({ to: user.email, subject: `Welcome to ${process.env.STORE_NAME}`, html: templates.welcomeEmail(user.name) }).catch(console.error);
+    // Fetch config to check if Welcome Email is enabled
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    
+    // Create User...
+    
+    if (systemConfig?.emailAlerts?.welcome !== false) {
+      sendEmail({ 
+        to: user.email, 
+        subject: `Welcome to ${process.env.STORE_NAME}`, 
+        html: templates.welcomeEmail(user.name) 
+      }).catch(console.error);
+    }
+
+    const authData = generateToken(user._id);
 
     res.status(201).json({
       _id: user._id,
@@ -36,7 +54,8 @@ exports.registerUser = async (req, res) => {
       email: user.email,
       mobile: user.mobile,
       role: user.role,
-      token: generateToken(user._id),
+      token: authData.token,
+      expiresInMinutes: authData.expiresInMinutes,
     });
   } catch (error) {
     console.log(error)
@@ -57,13 +76,16 @@ exports.loginUser = async (req, res) => {
         return res.status(403).json({ message: 'Your account has been suspended. Please contact support.' });
       }
       
+      const authData = generateToken(user._id);
+
       res.status(200).json({
         _id: user._id,
         name: user.name,
         email: user.email,
         mobile: user.mobile,
         role: user.role,
-        token: generateToken(user._id),
+        token: authData.token,
+        expiresInMinutes: authData.expiresInMinutes,
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
@@ -103,10 +125,11 @@ exports.instantLogin = async (req, res) => {
     }
     
     // 4. IF FOUND: Generate token and log them in instantly
-    const token = generateToken(user._id);
+    const authData = generateToken(user._id);
 
     res.status(200).json({
-      token,
+      token: authData.token,
+      expiresInMinutes: authData.expiresInMinutes,
       user: {
         _id: user._id,
         name: user.name,
@@ -132,6 +155,81 @@ exports.getUserProfile = async (req, res) => {
     } else {
       res.status(404).json({ message: 'User not found' });
     }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ==========================================
+// NEW ADMIN FEATURES
+// ==========================================
+
+// @route   POST /api/auth/create-admin
+// @desc    Create a new Admin account securely using the dynamic master secret
+exports.createAdmin = async (req, res) => {
+  try {
+    const { name, email, mobile, password, masterSecret } = req.body;
+
+    // 1. Get the current master key from the database
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    const requiredSecret = systemConfig?.security?.adminMasterSecret || 'SahakarStree@123';
+
+    // 2. Check if the person provided the correct key
+    if (masterSecret !== requiredSecret) {
+      return res.status(403).json({ message: 'You do not have permission to create an Admin account.' });
+    }
+
+    const userExists = await User.findOne({ $or: [{ email }, { mobile }] });
+    if (userExists) {
+      return res.status(400).json({ message: 'An account with this email or mobile already exists.' });
+    }
+
+    // 3. Hand them the manager's badge
+    const adminUser = await User.create({
+      name,
+      email,
+      mobile,
+      password,
+      role: 'Admin', // System forces this to be an Admin
+      status: 'Active'
+    });
+
+    res.status(201).json({
+      message: 'Admin account created successfully.',
+      name: adminUser.name,
+      email: adminUser.email,
+      role: adminUser.role
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   PUT /api/auth/admin/change-password
+// @desc    Change password for a logged-in Admin
+// @access  Private (Requires user to be logged in via middleware)
+exports.changeAdminPassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    // Find the user who is currently logged in
+    const user = await User.findById(req.user._id);
+
+    // Make sure they are actually a manager
+    if (!user || user.role !== 'Admin') {
+      return res.status(403).json({ message: 'Only administrators can use this feature.' });
+    }
+
+    // Verify they have the correct old key before cutting a new one
+    if (!(await user.matchPassword(currentPassword))) {
+      return res.status(400).json({ message: 'Your current password is incorrect.' });
+    }
+
+    // Change the lock
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({ message: 'Admin password has been changed successfully.' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

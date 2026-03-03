@@ -78,8 +78,11 @@ exports.phonepeWebhook = async (req, res) => {
 
       // Inside the PAYMENT_SUCCESS block, populate user to get email:
       const populatedOrder = await Order.findById(order._id).populate('user', 'name email');
-      sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) }).catch(console.error).catch(console.error);
-
+      
+      if (config?.emailAlerts?.paymentSuccess !== false) {
+        sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) }).catch(console.error).catch(console.error);
+      }
+      
     } else {
       order.status = 'Failed';
       order.payment.status = 'Failed';
@@ -132,11 +135,11 @@ exports.deliveryWebhook = async (req, res) => {
     await order.save();
 
     const populatedOrder = await Order.findById(order._id).populate('user', 'email');
-    if (mappedStage === 'Delivered') {
+    if (mappedStage === 'Delivered' && config?.emailAlerts?.orderDelivered !== false) {
       sendEmail({ to: populatedOrder.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) });
     } else if (mappedStage.includes('Transit')) {
       // Check if it's the FIRST transit update to avoid spamming
-      if (order.transitHistory.length === 2) { 
+      if (order.transitHistory.length === 2 && config?.emailAlerts?.orderDispatched !== false) { 
         sendEmail({ to: populatedOrder.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
       }
     }

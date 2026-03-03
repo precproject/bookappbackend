@@ -51,7 +51,8 @@ const configSchema = new mongoose.Schema({
     provider: { type: String, default: 'Delhivery' },
     apiToken: { type: String, default: '' },
     pickupPincode: { type: String, default: '' }, // Needed to fetch shipping rates
-    isLiveMode: { type: Boolean, default: false }
+    isLiveMode: { type: Boolean, default: false },
+    shippingCharge: { type: Number, default: 50 } // <--- ADD THIS LINE
   },
 
   // 7. Social Media Links
@@ -61,6 +62,24 @@ const configSchema = new mongoose.Schema({
     instagram: { type: String, default: '' },
     linkedin: { type: String, default: '' },
     youtube: { type: String, default: '' }
+  },
+  security: {
+    adminMasterSecret: { type: String, default: 'SahakarStree@123' } // Default fallback code
+  },
+
+  // 7. Email Notifications Toggle
+  emailAlerts: {
+    welcome: { type: Boolean, default: true },
+    orderPlaced: { type: Boolean, default: true },
+    paymentSuccess: { type: Boolean, default: true },
+    orderDispatched: { type: Boolean, default: true },
+    orderDelivered: { type: Boolean, default: true },
+    paymentReminder: { type: Boolean, default: true }
+  },
+
+  // 8. Homescreen / UI Settings
+  uiConfig: {
+    showRecentOrdersPopup: { type: Boolean, default: true }
   }
 
 }, { timestamps: true });

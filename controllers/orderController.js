@@ -8,7 +8,7 @@ const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 const PhonePeService = require('../utils/phonepeService');
 
-// Helper to execute inventory and referral logic safely once a payment succeeds
+// --- THE CASHIER COMPLETES THE SALE ---
 const processSuccessfulPayment = async (order, transactionId, paymentMethod) => {
   if (order.status !== 'Pending Payment') return; // Prevent double execution
 
@@ -16,19 +16,24 @@ const processSuccessfulPayment = async (order, transactionId, paymentMethod) => 
   order.payment.status = 'Success';
   order.payment.txnId = transactionId;
   order.payment.method = paymentMethod;
-  order.transitHistory.push({ stage: 'Payment Verified', time: Date.now(), completed: true });
+  order.transitHistory.push({ stage: 'Payment Verified - Order In Progress', time: Date.now(), completed: true });
 
-  // 1. Deduct inventory securely
+  // 1. Deduct inventory securely (Checking the shelf one last time)
   for (const item of order.items) {
-    const book = await Book.findById(item.book);
-    if (book && book.type === 'Physical' && book.stock > 0) {
+    // We only grab the book if the stock is STILL greater than or equal to what they ordered
+    const book = await Book.findOne({ _id: item.book, type: 'Physical', stock: { $gte: item.qty } });
+    
+    if (book) {
       book.stock -= item.qty;
       book.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId}`, change: -item.qty, balance: book.stock });
       await book.save();
+    } else {
+       // If someone else bought the last copy a millisecond ago, we flag the order for the admin to handle (e.g., refund or delay)
+       order.notes = (order.notes || '') + ` [System Note: Stock ran out for one or more items right before payment completed. Please review.]`;
     }
   }
 
-  // 2. Add to Referral Transactions if applicable
+  // 2. Add to Referral Transactions if a friend invited them
   if (order.priceBreakup.referralApplied) {
     const refDoc = await Referral.findOne({ code: order.priceBreakup.referralApplied });
     if (refDoc) {
@@ -48,29 +53,34 @@ const processSuccessfulPayment = async (order, transactionId, paymentMethod) => 
   await order.save();
 };
 
-// @route   POST /api/orders/checkout
+// --- CREATE ORDER (The Cashier Calculates the Bill) ---
 exports.createOrder = async (req, res) => {
   try {
     const { orderItems, shippingAddress, discountCode, referralCode } = req.body;
     if (!orderItems || orderItems.length === 0) return res.status(400).json({ message: 'No order items provided' });
 
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    const isGstEnabled = systemConfig?.taxConfig?.isGstEnabled ?? true;
+    const gstPercentage = systemConfig?.taxConfig?.gstPercentage ?? 5;
+    const configShippingCharge = systemConfig?.delivery?.shippingCharge ?? 50;
+
     let subtotal = 0;
     let hasPhysicalItem = false;
     const itemsForDB = [];
 
-    // Calculate Prices
     for (const item of orderItems) {
       const book = await Book.findById(item.bookId);
       if (!book) return res.status(404).json({ message: `Book not found` });
+      
       if (book.type === 'Physical') {
         hasPhysicalItem = true;
         if (book.stock < item.qty) return res.status(400).json({ message: `Insufficient stock for ${book.title}` });
       }
+      
       subtotal += book.price * item.qty;
       itemsForDB.push({ book: book._id, name: book.title, qty: item.qty, price: book.price });
     }
 
-    // Discount & Referral Logic
     let discountAmount = 0;
     let appliedDiscountCode = null;
     let appliedReferral = null;
@@ -95,10 +105,10 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // Totals
     const taxableAmount = Math.max(0, subtotal - discountAmount);
-    const taxAmount = Math.round(taxableAmount * 0.05);
-    const shipping = hasPhysicalItem ? 50 : 0; 
+    const taxRateMultiplier = isGstEnabled ? (gstPercentage / 100) : 0;
+    const taxAmount = Math.round(taxableAmount * taxRateMultiplier);
+    const shipping = hasPhysicalItem ? configShippingCharge : 0; 
     const finalTotal = Math.round(taxableAmount + taxAmount + shipping);
 
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
@@ -108,23 +118,27 @@ exports.createOrder = async (req, res) => {
       user: req.user._id,
       items: itemsForDB,
       priceBreakup: { subtotal, shipping, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
-      shipping: { address: hasPhysicalItem ? shippingAddress : 'Digital Delivery', partner: 'Pending Assign' },
+      shipping: { address: hasPhysicalItem ? shippingAddress : 'Digital Delivery', partner: 'Pending Assign', trackingId: null },
       status: 'Pending Payment',
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
 
-    sendEmail({ to: req.user.email, subject: `Order Initiated - #${order.orderId}`, html: templates.orderPlacedEmail(order, req.user.name) }).catch(console.error);
-    
+    if (systemConfig?.emailAlerts?.orderPlaced !== false) {
+      sendEmail({ 
+        to: req.user.email, 
+        subject: `Order Initiated - #${order.orderId}`, 
+        html: templates.orderPlacedEmail(order, req.user.name) 
+      }).catch(console.error);
+    }
+
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 
-    // Zero Amount Bypass
     if (finalTotal === 0) {
       await processSuccessfulPayment(order, 'DISC-100', '100% Discount');
       return res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl: `${frontendUrl}/payment-status/${order.orderId}` }});
     }
 
-    // Initiate Gateway Payment via Service
     const payEnv = await PhonePeService.getEnvConfig(Config);
     if (!payEnv.merchantId) return res.status(500).json({ message: 'Payment gateway is not configured.' });
 
@@ -145,7 +159,7 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// @route   GET /api/orders/verify-payment/:orderId
+// --- VERIFY PAYMENT (Checking the Bank Machine) ---
 exports.verifyPaymentStatus = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId });
@@ -161,7 +175,6 @@ exports.verifyPaymentStatus = async (req, res) => {
     if (code === 'PAYMENT_SUCCESS') {
       await processSuccessfulPayment(order, data.transactionId, data.paymentInstrument?.type || 'Online');
     } else if (code === 'PAYMENT_ERROR' || code === 'PAYMENT_DECLINED') {
-      order.status = 'Failed';
       order.payment.status = 'Failed';
       await order.save();
     }
@@ -173,7 +186,7 @@ exports.verifyPaymentStatus = async (req, res) => {
   }
 };
 
-// @route   GET /api/orders/retry-payment/:orderId
+// --- RETRY PAYMENT ---
 exports.retryPayment = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId, user: req.user._id });
@@ -201,15 +214,13 @@ exports.retryPayment = async (req, res) => {
   }
 };
 
-// @route   POST /api/orders/webhook/phonepe
-// @desc    Server-to-Server Webhook handler 
+// --- WEBHOOK (Bank quietly tells us the payment is done) ---
 exports.phonepeWebhook = async (req, res) => {
   try {
     const { response } = req.body;
     const xVerifyHeader = req.headers['x-verify'];
     const payEnv = await PhonePeService.getEnvConfig(Config);
 
-    // Verify Webhook Signature Integrity
     const expectedChecksum = PhonePeService.generateChecksum(response, '', payEnv.saltKey, payEnv.saltIndex);
     if (xVerifyHeader !== expectedChecksum) return res.status(400).send('Invalid Signature');
 
@@ -221,20 +232,18 @@ exports.phonepeWebhook = async (req, res) => {
     if (paymentData.code === 'PAYMENT_SUCCESS') {
       await processSuccessfulPayment(order, paymentData.data.transactionId, paymentData.data.paymentInstrument?.type || 'Online Webhook');
     } else {
-      order.status = 'Failed';
       order.payment.status = 'Failed';
       await order.save();
     }
 
-    res.status(200).send('OK'); // Acknowledge receipt to stop PhonePe from retrying
+    res.status(200).send('OK'); 
   } catch (error) {
     console.error("Webhook processing error:", error);
     res.status(500).send('Webhook Error');
   }
 };
 
-// @route   POST /api/orders/refund/:orderId
-// @access  Admin Only
+// --- REFUND ORDER (Returning the money) ---
 exports.refundOrder = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId });
@@ -242,6 +251,9 @@ exports.refundOrder = async (req, res) => {
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
     const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
+
+    order.status = 'Refund Pending';
+    await order.save();
 
     const response = await PhonePeService.initiateRefund({
       originalTxnId: order.payment.txnId,
@@ -252,12 +264,15 @@ exports.refundOrder = async (req, res) => {
     });
 
     if (response.code === 'PAYMENT_SUCCESS' || response.code === 'PAYMENT_PENDING') {
-      order.status = 'Cancelled';
+      order.status = 'Refunded';
       order.payment.status = 'Refunded';
       await order.save();
       res.status(200).json({ message: 'Refund initiated successfully', data: response });
     } else {
-      res.status(400).json({ message: 'Refund failed at gateway' });
+      // If the bank refuses the refund, we flag it as an error so the admin knows money wasn't returned!
+      order.status = 'Refund Failed - Needs Attention';
+      await order.save();
+      res.status(400).json({ message: 'Refund failed at gateway. Order flagged for review.' });
     }
 
   } catch (error) {

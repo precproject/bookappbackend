@@ -97,6 +97,6 @@ exports.updateCart = async (req, res) => {
     await user.save();
     res.status(200).json({ message: 'Cart synced' });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to sync cart' });
+    res.status(500).json({ message: 'Failed to sync cart' + error });
   }
 };

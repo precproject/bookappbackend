@@ -15,6 +15,7 @@ const bookSchema = new mongoose.Schema({
   type: { type: String, enum: ['Physical', 'Digital'], required: true },
   price: { type: Number, required: true },
   stock: { type: Number, default: null }, // Null means infinite (Digital)
+  coverImage: { type: String, default: '' },
   history: [historySchema]
 }, { timestamps: true });
 
