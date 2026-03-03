@@ -3,7 +3,7 @@ const router = express.Router();
 const Book = require('../models/Book');
 const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
-const { getRecentPurchases, getAllBooks, getBookByIdOrSku, getBookReviews, addBookReview } = require('../controllers/publicController');
+const { getRecentPurchases, getAllBooks, getBookByIdOrSku, getBookReviews, addBookReview, deleteReview } = require('../controllers/publicController');
 const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/recent-purchases', getRecentPurchases);
@@ -16,6 +16,7 @@ router.get('/books/:id', getBookByIdOrSku);
 // Book Reviews
 router.get('/books/:id/reviews', getBookReviews);
 router.post('/books/:id/reviews', protect, addBookReview);
+router.delete('/books/:id/reviews/:reviewId', protect, deleteReview);
 
 // @route   GET /api/public/books
 // @desc    Fetch available books for the storefront
@@ -72,4 +73,6 @@ router.get('/referrals/verify/:code',  async (req, res) => {
   }
 });
 
+
 module.exports = router;
+

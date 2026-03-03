@@ -13,7 +13,9 @@ const {
   markTransactionPaid,
   getReferralTransactions,
   updateReferral,
-  createUser
+  createUser,
+  getAllReviews,
+  toggleReviewStatus
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
@@ -64,6 +66,8 @@ router.put('/discounts/:id', updateDiscount);
 router.get('/config', getConfig);
 router.put('/config/:section', updateConfig); // <-- Matches frontend updateConfig('general', data)
 
+router.get('/reviews', getAllReviews);
+router.put('/reviews/:id/toggle', toggleReviewStatus); // <-- Matches frontend updateConfig('general', data)
 
 // Blog
 router.post('/blogs', createBlog);

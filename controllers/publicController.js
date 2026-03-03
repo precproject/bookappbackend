@@ -149,3 +149,27 @@ exports.addBookReview = async (req, res) => {
     res.status(500).json({ message: 'Failed to submit review', error: error.message });
   }
 };
+
+// @route   DELETE /api/public/books/:id/reviews/:reviewId
+// @desc    Delete a review
+exports.deleteReview = async (req, res) => {
+  try {
+    const { id, reviewId } = req.params;
+    
+    // Find the review
+    const review = await Review.findById(reviewId);
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+
+    // SECURITY CHECK: Ensure the person deleting is either the author OR an Admin
+    if (review.user.toString() !== req.user.id && req.user.role !== 'Admin') {
+      return res.status(401).json({ message: 'Not authorized to delete this review' });
+    }
+
+    // Delete it from the database
+    await review.deleteOne();
+    
+    res.status(200).json({ message: 'Review deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error deleting review' });
+  }
+};
