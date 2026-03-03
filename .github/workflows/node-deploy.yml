@@ -34,7 +34,7 @@ jobs:
           if [ $? -eq 0 ]; then
             pm2 restart api
           else
-            pm2 start index.js --name api
+            pm2 start server.js --name api
           fi
           
           pm2 save
