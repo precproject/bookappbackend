@@ -5,10 +5,11 @@ const fs = require('fs');
 
 // Ensure the folder for saving images exists
 const uploadDir = path.join(__dirname, '../public/uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+if (process.env.NODE_ENV === 'development') {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
 }
-
 // 1. Receive the file into memory safely (Limit size to 5MB)
 const multerStorage = multer.memoryStorage();
 const multerFilter = (req, file, cb) => {
