@@ -5,7 +5,7 @@ const reviewSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   rating: { type: Number, required: true, min: 1, max: 5 },
   comment: { type: String, required: true },
-  status: { type: String, enum: ['Active', 'Hidden'], default: 'Active' }
+  status: { type: String, enum: ['Approved', 'Hidden'], default: 'Approved' }
 }, { timestamps: true });
 
 // Prevent a user from reviewing the same book twice

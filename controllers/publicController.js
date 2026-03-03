@@ -94,7 +94,7 @@ exports.getBookReviews = async (req, res) => {
     
     if (!book) return res.status(404).json({ message: 'Book not found' });
 
-    const reviews = await Review.find({ book: book._id, status: 'Active' })
+    const reviews = await Review.find({ book: book._id, status: 'Approved' })
       .populate('user', 'name')
       .sort({ createdAt: -1 });
 
@@ -132,7 +132,7 @@ exports.addBookReview = async (req, res) => {
     });
 
     // 4. Update the book's average rating 
-    const allReviews = await Review.find({ book: book._id, status: 'Active' });
+    const allReviews = await Review.find({ book: book._id, status: 'Approved' });
     const avgRating = allReviews.reduce((acc, item) => item.rating + acc, 0) / allReviews.length;
     
     book.rating = parseFloat(avgRating.toFixed(1)); // Save as e.g., 4.5

@@ -4,12 +4,12 @@ const path = require('path');
 const dotenv = require('dotenv');
 
 // Load Models
-const User = require('./models/User');
-const Book = require('./models/Book');
-const Order = require('./models/Order');
-const Referral = require('./models/Referral');
-const Discount = require('./models/Discount');
-const Config = require('./models/Config');
+const Book = require('../models/Book');
+const Order = require('../models/Order');
+const Referral = require('../models/Referral');
+const Discount = require('../models/Discount');
+const Config = require('../models/Config');
+const User = require('../models/User');
 
 dotenv.config();
 

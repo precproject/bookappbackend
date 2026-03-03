@@ -4,6 +4,7 @@ const Book = require('../models/Book');
 const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
 const Config = require('../models/Config');
+const Review = require('../models/Review');
 
 // --- DASHBOARD HOME ---
 // @route   GET /api/admin/dashboard/stats
@@ -639,5 +640,48 @@ exports.createUser = async (req, res) => {
     res.status(201).json({ user });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   GET /api/admin/reviews
+// @desc    Get all reviews, with optional filtering by book ID
+exports.getAllReviews = async (req, res) => {
+  try {
+    const { bookId, page = 1, limit = 20 } = req.query;
+    const query = bookId ? { book: bookId } : {};
+
+    const reviews = await Review.find(query)
+      .populate('user', 'name email')
+      .populate('book', 'title sku')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
+
+    const totalItems = await Review.countDocuments(query);
+
+    res.status(200).json({
+      reviews,
+      totalItems,
+      totalPages: Math.ceil(totalItems / limit),
+      currentPage: parseInt(page)
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
+  }
+};
+
+// @route   PUT /api/admin/reviews/:id/toggle
+// @desc    Toggle a review between 'Approved' and 'Hidden'
+exports.toggleReviewStatus = async (req, res) => {
+  try {
+    const review = await Review.findById(req.params.id);
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+
+    review.status = review.status === 'Approved' ? 'Hidden' : 'Approved';
+    await review.save();
+
+    res.status(200).json({ message: 'Review status updated', status: review.status });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to update review status' });
   }
 };

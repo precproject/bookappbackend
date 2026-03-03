@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules/
 jspm_packages/
 public/
+scripts/data-export
 
 # Environment Variables (CRITICAL: NEVER COMMIT THIS)
 .env
