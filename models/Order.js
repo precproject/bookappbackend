@@ -26,9 +26,18 @@ const orderSchema = new mongoose.Schema({
     updatedAt: { type: Date }
   },
   shipping: {
-    address: { type: String, required: true },
+    // Delhivery requires these to be separate strings, not a single address block
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    street: { type: String, required: true },
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    pincode: { type: String, required: true },
+    
     partner: { type: String, default: 'Pending Assign' },
-    trackingId: { type: String, default: '-' }
+    trackingId: { type: String, default: null },
+    awbStatus: { type: String, default: null }, // e.g., 'Manifested', 'In Transit'
+    estimatedDelivery: { type: Date, default: null } // TAT stored here
   },
   transitHistory: [{
     stage: { type: String }, // e.g., 'Order Placed', 'Shipped', 'Delivered'

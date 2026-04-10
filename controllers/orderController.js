@@ -7,6 +7,7 @@ const Config = require('../models/Config');
 const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 const PhonePeService = require('../utils/phonepeService');
+const delhiveryService = require('../services/delhiveryService'); // <-- Import Delhivery
 
 // --- THE CASHIER COMPLETES THE SALE ---
 const processSuccessfulPayment = async (order, transactionId, paymentMethod) => {
@@ -48,6 +49,24 @@ const processSuccessfulPayment = async (order, transactionId, paymentMethod) => 
       });
       await refDoc.save();
     }
+  }
+
+  // 3. 🚀 TRIGGER DELHIVERY SHIPMENT
+  // We need to populate items to get book weights if they exist
+  await order.populate('items.book');
+  
+  const shipment = await delhiveryService.createShipment(order, order.items);
+  
+  if (shipment.success) {
+    order.shipping.partner = 'Delhivery';
+    order.shipping.trackingId = shipment.awb;
+    order.shipping.awbStatus = shipment.status; 
+    if (shipment.estimatedDelivery) {
+      order.shipping.estimatedDelivery = new Date(shipment.estimatedDelivery);
+    }
+    order.transitHistory.push({ stage: 'Shipment Created (AWB: ${shipment.awb})', time: Date.now(), completed: true });
+  } else {
+    order.notes = (order.notes || '') + ` [Delhivery Error: ${shipment.error}. Requires manual AWB generation.]`;
   }
 
   await order.save();
@@ -233,6 +252,7 @@ exports.phonepeWebhook = async (req, res) => {
       await processSuccessfulPayment(order, paymentData.data.transactionId, paymentData.data.paymentInstrument?.type || 'Online Webhook');
     } else {
       order.payment.status = 'Failed';
+      order.status = 'Failed'; // Update main order status too
       await order.save();
     }
 
@@ -243,12 +263,22 @@ exports.phonepeWebhook = async (req, res) => {
   }
 };
 
-// --- REFUND ORDER (Returning the money) ---
+// --- REFUND ORDER (Returning the money & Cancelling Shipment) ---
 exports.refundOrder = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId });
     if (!order || order.payment.status !== 'Success') return res.status(400).json({ message: 'Invalid order state for refund' });
 
+    // 1. Cancel the Delhivery Shipment first if it exists
+    if (order.shipping.trackingId && order.shipping.partner === 'Delhivery') {
+      const cancelResult = await delhiveryService.cancelShipment(order.shipping.trackingId);
+      if (cancelResult.success) {
+        order.shipping.awbStatus = 'Cancelled';
+        order.transitHistory.push({ stage: 'Shipment Cancelled with Courier', time: Date.now(), completed: true });
+      }
+    }
+
+    // 2. Process PhonePe Refund
     const payEnv = await PhonePeService.getEnvConfig(Config);
     const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 

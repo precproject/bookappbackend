@@ -53,7 +53,20 @@ const configSchema = new mongoose.Schema({
     apiToken: { type: String, default: '' },
     pickupPincode: { type: String, default: '' }, // Needed to fetch shipping rates
     isLiveMode: { type: Boolean, default: false },
-    shippingCharge: { type: Number, default: 50 } // <--- ADD THIS LINE
+    shippingCharge: { type: Number, default: 50 }, // <--- ADD THIS LINE
+    // Delhivery Specific Dynamic Configs
+    pickupLocationName: { type: String, default: 'PrimaryWarehouse' }, // Registered in Delhivery Dashboard
+    originPincode: { type: String, default: '400001' },
+    originCity: { type: String, default: 'Mumbai' },
+    originState: { type: String, default: 'Maharashtra' },
+    defaultWeightGrams: { type: Number, default: 500 }, // Fallback if book doesn't have weight
+    returnAddress: {
+      name: { type: String, default: 'SahakarStree Returns' },
+      address: { type: String, default: 'Return Street Address' },
+      pincode: { type: String, default: '400001' },
+      city: { type: String, default: 'Mumbai' },
+      state: { type: String, default: 'Maharashtra' }
+    }
   },
 
   // 7. Social Media Links
