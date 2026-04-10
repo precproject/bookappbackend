@@ -50,7 +50,7 @@ const getPublicConfig = async (req, res) => {
         taxConfig.isGstEnabled 
         taxConfig.gstPercentage 
         delivery.shippingCharge 
-        socialLinks,
+        socialLinks
         uiConfig.showRecentOrdersPopup
         -_id
       `);
