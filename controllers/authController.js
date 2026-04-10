@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 const Config = require('../models/Config'); // <-- Add this at the top
+
 // Helper to generate JWT Token and calculate expiration time
 const generateToken = (id) => {
   const expiresInDays = 2;
@@ -11,6 +12,81 @@ const generateToken = (id) => {
   const token = jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: `${expiresInDays}d` });
   
   return { token, expiresInMinutes };
+};
+
+// @route   POST /api/auth/prebook
+// @desc    Register for prebook & silently login
+// @access  Public
+exports.prebookUser = async (req, res) => {
+  try {
+    const { name, email, mobile } = req.body;
+
+    // 1. Check if user already exists via Email OR Mobile
+    let user = await User.findOne({ $or: [{ email }, { mobile }] });
+
+    if (user) {
+      // 2. User exists! Did they already prebook?
+      if (user.isPrebooked) {
+        const authData = generateToken(user._id);
+        return res.status(200).json({
+          alreadyPrebooked: true, // Tell React to show the "Already Registered" message
+          message: 'You are already on the pre-book list!',
+          user,
+          token: authData.token
+        });
+      } else {
+        // 3. User exists, but hasn't prebooked yet. Update their status.
+        user.isPrebooked = true;
+        // Optionally update name/mobile if they provided new info
+        if(name) user.name = name; 
+        if(mobile) user.mobile = mobile;
+        
+        await user.save();
+        const authData = generateToken(user._id);
+        
+        return res.status(200).json({
+          alreadyPrebooked: false,
+          message: 'You have been added to the pre-book list!',
+          user,
+          token: authData.token
+        });
+      }
+    }
+
+    // 4. Brand New User! Silent Registration.
+    const dummyPassword = Math.random().toString(36).slice(-10) + 'A1!'; // Secure random password
+    
+    user = await User.create({
+      name,
+      email,
+      mobile,
+      password: dummyPassword,
+      isPrebooked: true // Tag them immediately
+    });
+
+    const authData = generateToken(user._id);
+
+    // Send a welcome email if configured
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    if (systemConfig?.emailAlerts?.welcome !== false) {
+      sendEmail({ 
+        to: user.email, 
+        subject: `Welcome to the Waitlist for ${process.env.STORE_NAME}`, 
+        html: `<p>Hi ${user.name}, you are officially on the pre-book list! We will notify you the moment the book is available.</p>` 
+      }).catch(console.error);
+    }
+
+    res.status(201).json({
+      alreadyPrebooked: false,
+      message: 'Pre-booked successfully and account created!',
+      user,
+      token: authData.token
+    });
+
+  } catch (error) {
+    console.error('Prebook Error:', error);
+    res.status(500).json({ message: 'Server error during prebooking.' });
+  }
 };
 
 // @route   POST /api/auth/register

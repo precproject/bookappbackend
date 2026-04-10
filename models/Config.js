@@ -25,6 +25,7 @@ const configSchema = new mongoose.Schema({
 
   // 3. E-commerce & Shopping Rules
   shoppingRules: {
+    isPrebookActive: { type: Boolean, default: true }, // <--- ADD THIS LINE
     referralBasedShoppingOnly: { type: Boolean, default: true }, // Default true per your request
     currency: { type: String, default: 'INR' },
     currencySymbol: { type: String, default: '₹' }

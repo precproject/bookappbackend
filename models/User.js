@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, enum: ['Customer', 'Admin'], default: 'Customer' },
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
+  isPrebooked: { type: Boolean, default: false },
   referralCode: { type: String, unique: true, sparse: true }, 
   addresses: [{
     fullName: { type: String, required: true },

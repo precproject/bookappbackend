@@ -29,6 +29,7 @@ backups/
 .AppleDouble
 .LSOverride
 Thumbs.db
+test.txt
 
 # Optional: Vercel local dev folder
 .vercel/
