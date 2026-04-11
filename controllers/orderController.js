@@ -93,11 +93,15 @@ exports.createOrder = async (req, res) => {
       
       if (book.type === 'Physical') {
         hasPhysicalItem = true;
-        if (book.stock < item.qty) return res.status(400).json({ message: `Insufficient stock for ${book.title}` });
+        if (book.stock < item.qty) {
+          const bookTitle = typeof book.title === 'object' ? (book.title.en || 'Book') : book.title;
+          return res.status(400).json({ message: `Insufficient stock for ${bookTitle}` });
+        }
       }
       
+      const bookTitle = typeof book.title === 'object' ? (book.title.en || book.title.mr) : book.title;
       subtotal += book.price * item.qty;
-      itemsForDB.push({ book: book._id, name: book.title, qty: item.qty, price: book.price });
+      itemsForDB.push({ book: book._id, name: book.title, type: book.type, qty: item.qty, price: book.price });
     }
 
     let discountAmount = 0;
@@ -133,7 +137,7 @@ exports.createOrder = async (req, res) => {
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
     // --- THE FIX: FORMAT THE SHIPPING OBJECT CORRECTLY FOR MONGOOSE ---
-    let shippingData = {};
+    let shippingData = undefined;
 
     if (hasPhysicalItem) {
       if (!shippingAddress || !shippingAddress.pincode) {
