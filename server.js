@@ -9,7 +9,8 @@ const connectDB = require('./config/db');
 const initializeSystem = require('./utils/initApp'); // <-- NEW
 const startCronJobs = require('./utils/cronJobs');   // <-- NEW
 const path = require('path');
-
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
 // Load env vars
 dotenv.config();
 
@@ -46,6 +47,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Security & Middlewares
 app.use(helmet());
+app.use(mongoSanitize()); // Strips out malicious '$' and '.' characters from req.body
 
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
   setHeaders: (res, path, stat) => {
@@ -84,6 +86,15 @@ if (process.env.NODE_ENV === 'development') {
 //     console.log(`Client disconnected: ${socket.id}`);
 //   });
 // });
+
+// Limit API to 100 requests per 15 minutes per IP
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, 
+  max: 100,
+  message: 'Too many requests from this IP, please try again after 15 minutes'
+});
+
+app.use('/api/', apiLimiter);
 
 // Basic Route for testing
 app.get('/api/health', (req, res) => {
