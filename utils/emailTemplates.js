@@ -215,3 +215,32 @@ exports.paymentReminderEmail = (orderId, total) => emailLayout(`
     <a href="${FRONTEND_URL}/payment-status/${orderId}" style="${buttonStyle}">Complete Payment Now</a>
   </div>
 `);
+
+
+exports.prebookEmail = (userName, storeName = 'SahakarStree') => {
+  return `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-w: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #f1f5f9; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+      <div style="background-color: #ea580c; padding: 30px 20px; text-align: center;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700;">You're on the Waitlist! 🎉</h1>
+      </div>
+      
+      <div style="padding: 30px 20px; color: #334155; line-height: 1.6;">
+        <p style="font-size: 16px; margin-top: 0;">Hi <strong>${userName}</strong>,</p>
+        
+        <p style="font-size: 16px;">Thank you for your interest! You are officially on the exclusive pre-book waitlist for <strong>${storeName}</strong>.</p>
+        
+        <div style="background-color: #fff7ed; border-left: 4px solid #ea580c; padding: 15px; margin: 25px 0; border-radius: 0 8px 8px 0;">
+          <p style="margin: 0; color: #9a3412; font-weight: 600;">What happens next?</p>
+          <p style="margin: 5px 0 0 0; font-size: 14px;">We will notify you the exact moment the book becomes available for purchase so you can grab your copy before stock runs out.</p>
+        </div>
+
+        <p style="font-size: 16px;">Stay tuned for updates!</p>
+      </div>
+      
+      <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+        <p style="margin: 0; color: #64748b; font-size: 14px;">Best Regards,</p>
+        <p style="margin: 5px 0 0 0; color: #0f172a; font-weight: bold; font-size: 14px;">The ${storeName} Team</p>
+      </div>
+    </div>
+  `;
+};

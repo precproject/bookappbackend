@@ -21,23 +21,19 @@ exports.prebookUser = async (req, res) => {
   try {
     const { name, email, mobile } = req.body;
 
-    // 1. Check if user already exists via Email OR Mobile
     let user = await User.findOne({ $or: [{ email }, { mobile }] });
 
     if (user) {
-      // 2. User exists! Did they already prebook?
       if (user.isPrebooked) {
         const authData = generateToken(user._id);
         return res.status(200).json({
-          alreadyPrebooked: true, // Tell React to show the "Already Registered" message
+          alreadyPrebooked: true,
           message: 'You are already on the pre-book list!',
           user,
           token: authData.token
         });
       } else {
-        // 3. User exists, but hasn't prebooked yet. Update their status.
         user.isPrebooked = true;
-        // Optionally update name/mobile if they provided new info
         if(name) user.name = name; 
         if(mobile) user.mobile = mobile;
         
@@ -53,26 +49,27 @@ exports.prebookUser = async (req, res) => {
       }
     }
 
-    // 4. Brand New User! Silent Registration.
-    const dummyPassword = Math.random().toString(36).slice(-10) + 'A1!'; // Secure random password
+    const dummyPassword = Math.random().toString(36).slice(-10) + 'A1!'; 
     
     user = await User.create({
       name,
       email,
       mobile,
       password: dummyPassword,
-      isPrebooked: true // Tag them immediately
+      isPrebooked: true 
     });
 
     const authData = generateToken(user._id);
 
-    // Send a welcome email if configured
+    // --- THE FIX: USING THE STANDARD TEMPLATE ---
     const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
     if (systemConfig?.emailAlerts?.welcome !== false) {
+      const storeName = process.env.STORE_NAME || 'SahakarStree';
+      
       sendEmail({ 
         to: user.email, 
-        subject: `Welcome to the Waitlist for ${process.env.STORE_NAME}`, 
-        html: `<p>Hi ${user.name}, you are officially on the pre-book list! We will notify you the moment the book is available.</p>` 
+        subject: `Welcome to the Waitlist for ${storeName}`, 
+        html: templates.prebookEmail(user.name, storeName) // Perfectly utilizing the standard structure
       }).catch(console.error);
     }
 
