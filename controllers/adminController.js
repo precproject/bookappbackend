@@ -252,9 +252,23 @@ exports.getInventory = async (req, res) => {
 // @route   POST /api/admin/inventory
 exports.addBook = async (req, res) => {
   try {
+    const { sku, title, description, type, price, stock, weightInGrams, coverImage } = req.body;
+
+    const existingBook = await Book.findOne({ sku: sku.toUpperCase() });
+    if (existingBook) return res.status(400).json({ message: 'SKU already exists. Please use a unique SKU.' });
+
+    const initialStock = type === 'Digital' ? null : Number(stock || 0);
+
     const book = await Book.create({
-      ...req.body,
-      history: [{ type: 'Creation', reason: 'Initial Setup', change: req.body.stock, balance: req.body.stock || '∞' }]
+      sku: sku.toUpperCase(),
+      title, description, type, price, weightInGrams, coverImage,
+      stock: initialStock,
+      history: [{ 
+        type: 'Creation', 
+        reason: 'Initial Setup', 
+        change: initialStock, 
+        balance: type === 'Digital' ? '∞' : initialStock 
+      }]
     });
     res.status(201).json(book);
   } catch (error) {
@@ -268,23 +282,42 @@ exports.updateBook = async (req, res) => {
     const book = await Book.findById(req.params.id);
     if (!book) return res.status(404).json({ message: 'Book not found' });
 
-    const newStock = req.body.type === 'Digital' ? null : Number(req.body.stock);
+    const { sku, type, stock, weightInGrams } = req.body;
+
+    // Check for SKU collision if they changed the SKU
+    if (sku && sku.toUpperCase() !== book.sku) {
+      const existingSku = await Book.findOne({ sku: sku.toUpperCase() });
+      if (existingSku) return res.status(400).json({ message: 'This SKU is already assigned to another book.' });
+    }
+
+    const newStock = type === 'Digital' ? null : Number(stock);
     
-    // Log history if physical stock manually changed
-    if (book.type === 'Physical' && newStock !== book.stock) {
-      const stockDiff = newStock - book.stock;
+    // Log history ONLY if physical stock manually changed
+    if (type === 'Physical' && newStock !== book.stock) {
+      const oldStock = book.stock === null ? 0 : book.stock;
+      const stockDiff = newStock - oldStock;
       book.history.unshift({
         type: stockDiff > 0 ? 'Addition' : 'Deduction',
         reason: 'Manual Admin Adjustment',
         change: stockDiff,
         balance: newStock
       });
+    } else if (book.type === 'Physical' && type === 'Digital') {
+      book.history.unshift({
+        type: 'Adjustment',
+        reason: 'Converted to Digital Product',
+        change: null,
+        balance: '∞'
+      });
     }
 
+    // Apply updates
     Object.assign(book, req.body);
+    book.sku = sku ? sku.toUpperCase() : book.sku;
     book.stock = newStock;
-    await book.save();
+    book.weightInGrams = type === 'Digital' ? 0 : (weightInGrams || 500);
     
+    await book.save();
     res.status(200).json(book);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -294,8 +327,9 @@ exports.updateBook = async (req, res) => {
 // @route   DELETE /api/admin/inventory/:id
 exports.deleteBook = async (req, res) => {
   try {
-    await Book.findByIdAndDelete(req.params.id);
-    res.status(200).json({ message: 'Inventory item removed' });
+    const book = await Book.findByIdAndDelete(req.params.id);
+    if (!book) return res.status(404).json({ message: 'Book not found' });
+    res.status(200).json({ message: 'Book removed from inventory successfully.' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

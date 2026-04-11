@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const historySchema = new mongoose.Schema({
-  type: { type: String, enum: ['Addition', 'Deduction', 'Creation'], required: true },
+  type: { type: String, enum: ['Addition', 'Deduction', 'Creation', 'Adjustment'], required: true },
   reason: { type: String, required: true },
   change: { type: Number }, // Null for digital
   balance: { type: mongoose.Schema.Types.Mixed }, // Number or '∞'
@@ -13,8 +13,9 @@ const bookSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, required: true },
   type: { type: String, enum: ['Physical', 'Digital'], required: true },
-  price: { type: Number, required: true },
+  price: { type: Number, required: true, min: 0 },
   stock: { type: Number, default: null }, // Null means infinite (Digital)
+  weightInGrams: { type: Number, default: 500 }, // <--- CRITICAL FOR DELHIVERY
   coverImage: { type: String, default: '' },
   history: [historySchema]
 }, { timestamps: true });
