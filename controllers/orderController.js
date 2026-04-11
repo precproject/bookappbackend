@@ -132,12 +132,44 @@ exports.createOrder = async (req, res) => {
 
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
+    // --- THE FIX: FORMAT THE SHIPPING OBJECT CORRECTLY FOR MONGOOSE ---
+    let shippingData = {};
+
+    if (hasPhysicalItem) {
+      if (!shippingAddress || !shippingAddress.pincode) {
+        return res.status(400).json({ message: 'A complete shipping address is required for physical books.' });
+      }
+      shippingData = {
+        fullName: shippingAddress.fullName,
+        phone: shippingAddress.phone,
+        street: shippingAddress.street,
+        city: shippingAddress.city,
+        state: shippingAddress.state,
+        pincode: shippingAddress.pincode,
+        partner: 'Pending Assign',
+        trackingId: null
+      };
+    } else {
+      // Digital Orders: Mongoose requires these fields, so we fill them with safe system fallbacks
+      shippingData = {
+        fullName: req.user.name,      // Pull real name from logged-in user
+        phone: req.user.mobile,       // Pull real mobile from logged-in user
+        street: 'Digital Delivery',
+        city: 'Digital',
+        state: 'Digital',
+        pincode: '000000',
+        partner: 'Email / Instant',
+        trackingId: 'Digital'
+      };
+    }
+
+    // CREATE THE ORDER
     const order = await Order.create({
       orderId: uniqueOrderId,
       user: req.user._id,
       items: itemsForDB,
       priceBreakup: { subtotal, shipping, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
-      shipping: { address: hasPhysicalItem ? shippingAddress : 'Digital Delivery', partner: 'Pending Assign', trackingId: null },
+      shipping: shippingData, // <-- USING THE NEW PROPER OBJECT
       status: 'Pending Payment',
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
