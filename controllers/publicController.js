@@ -128,13 +128,27 @@ exports.addBookReview = async (req, res) => {
     
     if (!book) return res.status(404).json({ message: 'Book not found' });
 
-    // 2. Check if user already reviewed this book
+    // 2. NEW: VERIFIED PURCHASE CHECK
+    // Look for any successful order by this user that contains this specific book
+    const hasPurchased = await Order.findOne({
+      user: userId,
+      'items.book': book._id,
+      'payment.status': 'Success' // Ensure they actually paid for it
+    });
+
+    if (!hasPurchased) {
+      return res.status(403).json({ 
+        message: 'You can only review books that you have purchased.' 
+      });
+    }
+
+    // 3. Check if user already reviewed this book
     const existingReview = await Review.findOne({ book: book._id, user: userId });
     if (existingReview) {
       return res.status(400).json({ message: 'You have already reviewed this book.' });
     }
 
-    // 3. Create the review
+    // 4. Create the review
     const review = await Review.create({
       book: book._id,
       user: userId,
@@ -142,14 +156,14 @@ exports.addBookReview = async (req, res) => {
       comment
     });
 
-    // 4. Update the book's average rating 
+    // 5. Update the book's average rating 
     const allReviews = await Review.find({ book: book._id, status: 'Approved' });
     const avgRating = allReviews.reduce((acc, item) => item.rating + acc, 0) / allReviews.length;
     
     book.rating = parseFloat(avgRating.toFixed(1)); // Save as e.g., 4.5
     await book.save();
 
-    // 5. Populate user data before sending back to frontend so it displays immediately
+    // 6. Populate user data before sending back to frontend so it displays immediately
     await review.populate('user', 'name');
 
     res.status(201).json(review);
