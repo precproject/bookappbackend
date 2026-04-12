@@ -13,19 +13,18 @@ exports.phonepeWebhook = async (req, res) => {
     const phonepeResponse = req.body.response; 
     const providedChecksum = req.headers['x-verify'];
     
-    // Fetch Dynamic Configuration
     const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
-    const payConfig = config ? config.payment : null;
-
-    const saltKey = payConfig?.saltKey || process.env.PHONEPE_SALT_KEY;
-    const saltIndex = payConfig?.saltIndex || 1;
+    
+    // Read directly from config (No Encryption)
+    const saltKey = config?.payment?.saltKey || process.env.PHONEPE_SALT_KEY;
+    const saltIndex = config?.payment?.saltIndex || 1;
 
     if (!saltKey) {
       return res.status(500).json({ success: false, message: 'Server Payment Configuration Missing' });
     }
     
+    // Security Verification
     const expectedChecksum = crypto.createHash('sha256').update(phonepeResponse + saltKey).digest('hex') + "###" + saltIndex;
-
     if (providedChecksum !== expectedChecksum) {
       return res.status(400).json({ success: false, message: 'Invalid Signature' });
     }
@@ -33,70 +32,23 @@ exports.phonepeWebhook = async (req, res) => {
     const decodedPayload = JSON.parse(Buffer.from(phonepeResponse, 'base64').toString('utf-8'));
     const { merchantTransactionId, transactionId, code } = decodedPayload.data;
 
-    const order = await Order.findOne({ orderId: merchantTransactionId });
+    const order = await Order.findOne({ orderId: merchantTransactionId }).populate('user', 'name email');
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
     const io = req.app.get('io');
 
     if (code === 'PAYMENT_SUCCESS') {
-      order.status = 'In Progress'; 
-      order.payment.status = 'Success';
-      order.payment.txnId = transactionId;
-      order.payment.updatedAt = Date.now();
-      
-      order.transitHistory.push({ stage: 'Payment Verified', time: Date.now(), completed: true });
-      order.transitHistory.push({ stage: 'Ready for Dispatch', time: Date.now(), completed: true });
-
-      await order.save();
-
-      // Deduct Inventory
-      for (const item of order.items) {
-        const book = await Book.findById(item.book);
-        if (book && book.type === 'Physical' && book.stock > 0) {
-          book.stock -= item.qty;
-          book.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId}`, change: -item.qty, balance: book.stock });
-          await book.save();
-        }
-      }
-
-      // Credit Referral
-      if (order.priceBreakup.referralApplied) {
-        const referral = await Referral.findOne({ code: order.priceBreakup.referralApplied });
-        if (referral && referral.status === 'Active') {
-          referral.uses += 1;
-          referral.totalEarned += referral.rewardRate;
-          referral.pendingPayout += referral.rewardRate;
-          // Add this order to referral transactions
-          referral.transactions = referral.transactions || [];
-          referral.transactions.push(order._id);
-          await referral.save();
-        }
-      }
-      if (io) {
-        req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Success', orderId: order.orderId, message: 'Payment successful' });
-      }
-
-      // Inside the PAYMENT_SUCCESS block, populate user to get email:
-      const populatedOrder = await Order.findById(order._id).populate('user', 'name email');
-      
-      if (config?.emailAlerts?.paymentSuccess !== false) {
-        sendEmail({ to: populatedOrder.user.email, subject: `Payment Confirmed - #${order.orderId}`, html: templates.paymentSuccessEmail(populatedOrder, populatedOrder.user.name) }).catch(console.error).catch(console.error);
-      }
-      
+      await processSuccessfulPayment(order, transactionId, 'PhonePe', config);
+      if (io) io.to(order.orderId).emit('paymentStatusUpdate', { status: 'Success', orderId: order.orderId });
     } else {
       order.status = 'Failed';
       order.payment.status = 'Failed';
       order.payment.updatedAt = Date.now();
       await order.save();
-
-      if (io) {
-        req.app.get('io').to(order.orderId).emit('paymentStatusUpdate', { status: 'Failed', orderId: order.orderId, message: 'Payment failed' });
-      }
-      
+      if (io) io.to(order.orderId).emit('paymentStatusUpdate', { status: 'Failed', orderId: order.orderId });
     }
 
     res.status(200).send('OK');
-
   } catch (error) {
     console.error('PhonePe Webhook Error:', error);
     res.status(500).send('Internal Server Error');
@@ -107,45 +59,36 @@ exports.phonepeWebhook = async (req, res) => {
 // @desc    Receive tracking update from Delhivery/Shiprocket
 exports.deliveryWebhook = async (req, res) => {
   try {
-    // Assuming standard logistics payload structure
     const { waybill, current_status, status_dateTime, location } = req.body;
 
-    const order = await Order.findOne({ 'shipping.trackingId': waybill });
-    if (!order) return res.status(404).json({ message: 'Tracking ID not found in system' });
+    const order = await Order.findOne({ 'shipping.trackingId': waybill }).populate('user', 'email');
+    if (!order) return res.status(404).json({ message: 'Tracking ID not found' });
 
-    // Map logistics status to our system status
-    let mappedStage = current_status; 
-    let orderStatus = order.status;
+    const config = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
 
-    if (current_status.toLowerCase().includes('delivered')) {
-      mappedStage = 'Delivered';
-      orderStatus = 'Success';
-    } else if (current_status.toLowerCase().includes('transit') || current_status.toLowerCase().includes('dispatched')) {
-      mappedStage = `In Transit - ${location}`;
-      orderStatus = 'In Progress';
-    }
+    // Store minimal status string (Memory Optimized)
+    order.shipping.awbStatus = `${current_status} - ${location}`;
 
-    order.status = orderStatus;
-    order.transitHistory.push({
-      stage: mappedStage,
-      time: new Date(status_dateTime),
-      completed: true
-    });
-
-    await order.save();
-
-    const populatedOrder = await Order.findById(order._id).populate('user', 'email');
-    if (mappedStage === 'Delivered' && config?.emailAlerts?.orderDelivered !== false) {
-      sendEmail({ to: populatedOrder.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) });
-    } else if (mappedStage.includes('Transit')) {
-      // Check if it's the FIRST transit update to avoid spamming
-      if (order.transitHistory.length === 2 && config?.emailAlerts?.orderDispatched !== false) { 
-        sendEmail({ to: populatedOrder.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
+    const statusLower = current_status.toLowerCase();
+    
+    if (statusLower.includes('delivered') && order.status !== 'Delivered') {
+      order.status = 'Delivered';
+      order.transitHistory.push({ stage: 'Package Delivered', time: new Date(status_dateTime), completed: true });
+      
+      if (config?.emailAlerts?.orderDelivered !== false) {
+        sendEmail({ to: order.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) }).catch(console.error);
+      }
+    } 
+    else if ((statusLower.includes('dispatched') || statusLower.includes('in transit')) && !order.shipping.isDispatchedAlertSent) {
+      order.shipping.isDispatchedAlertSent = true; 
+      
+      if (config?.emailAlerts?.orderDispatched !== false) {
+        sendEmail({ to: order.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
       }
     }
 
-    res.status(200).json({ success: true, message: 'Transit history updated' });
-
+    await order.save();
+    res.status(200).json({ success: true, message: 'Status updated' });
   } catch (error) {
     console.error('Delivery Webhook Error:', error);
     res.status(500).send('Internal Server Error');

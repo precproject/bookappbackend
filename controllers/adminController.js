@@ -5,6 +5,8 @@ const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
 const Config = require('../models/Config');
 const Review = require('../models/Review');
+const { sendEmail } = require('../utils/email');
+const crypto = require('crypto');
 
 // --- DASHBOARD HOME ---
 // @route   GET /api/admin/dashboard/stats
@@ -717,5 +719,44 @@ exports.toggleReviewStatus = async (req, res) => {
     res.status(200).json({ message: 'Review status updated', status: review.status });
   } catch (error) {
     res.status(500).json({ message: 'Failed to update review status' });
+  }
+};
+
+// @route   POST /api/admin/users/:id/reset-password
+exports.adminResetUserPassword = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Generate a secure, random 10-character password
+    const newPassword = crypto.randomBytes(5).toString('hex') + 'A1!'; 
+    
+    user.password = newPassword; // Mongoose pre-save hook will hash this automatically
+    await user.save();
+
+    const adminEmail = "vaibhavdesign@gmail.com";
+    
+    await sendEmail({
+      to: adminEmail,
+      subject: `Password Reset Alert: ${user.email}`,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h2 style="color: #ea580c;">Password Reset Successful</h2>
+          <p>Admin, you have successfully reset the password for a user.</p>
+          <div style="background-color: #f1f5f9; padding: 15px; border-radius: 8px;">
+            <p><strong>User Name:</strong> ${user.name}</p>
+            <p><strong>User Email:</strong> ${user.email}</p>
+            <p><strong>New Temporary Password:</strong> <span style="font-family: monospace; font-size: 18px; color: #0f172a;">${newPassword}</span></p>
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin-top: 20px;">Please communicate this new password securely to the user.</p>
+        </div>
+      `
+    });
+
+    res.status(200).json({ message: 'Password reset successfully and emailed to Admin.' });
+
+  } catch (error) {
+    console.error('Admin Password Reset Error:', error);
+    res.status(500).json({ message: 'Failed to reset password.' });
   }
 };

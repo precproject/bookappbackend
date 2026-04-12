@@ -15,7 +15,8 @@ const {
   updateReferral,
   createUser,
   getAllReviews,
-  toggleReviewStatus
+  toggleReviewStatus,
+  adminResetUserPassword
 } = require('../controllers/adminController');
 
 const { getSettings, updateSettings } = require('../controllers/adminController');
@@ -37,6 +38,7 @@ router.post('/orders/:id/transit', updateOrderTransit); // Used by Delivery
 router.post('/users', createUser);
 router.get('/users', getAllUsers);
 router.put('/users/:id/toggle-status', toggleUserStatus);
+router.put('/users/:id/reset-password', adminResetUserPassword);
 
 // Inventory
 router.get('/inventory', getInventory);
