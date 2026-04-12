@@ -20,6 +20,10 @@ scripts/data-export
 .env.test.local
 .env.production.local
 
+setup.txt 
+improvement.txt
+test-system.js
+
 # Automated DB Backups folder (created by cronJobs.js)
 backups/
 *.gzip

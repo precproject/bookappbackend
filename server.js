@@ -15,7 +15,9 @@ const startCronJobs = require('./utils/cronJobs'); // <-- Imported successfully
 // ==========================================
 // 1. ENVIRONMENT & DATABASE
 // ==========================================
-dotenv.config();
+require('dotenv').config({
+  path: '/var/www/config/prod.env'
+});
 
 connectDB().then(async () => {
   await initializeSystem();
