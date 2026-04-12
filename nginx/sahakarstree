@@ -1,0 +1,42 @@
+# FRONTEND (MAIN DOMAIN + WWW + SUBDOMAIN)
+server {
+    listen 80;
+    server_name sahakarstree.com www.sahakarstree.com chintanatunchintamuktikade.sahakarstree.com;
+
+    root /var/www/frontend;
+    index index.html;
+
+    # React routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API via same domain
+    location /api/ {
+        proxy_pass http://127.0.0.1:5001/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+
+# API SUBDOMAIN
+server {
+    listen 80;
+    server_name api.sahakarstree.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5001/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+
+        proxy_cache_bypass $http_upgrade;
+    }
+}

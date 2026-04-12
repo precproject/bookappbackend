@@ -50,6 +50,9 @@ app.use(helmet({ crossOriginResourcePolicy: false }));
 // Strict CORS for Production, relaxed for Development
 const allowedOrigins = [
   'http://localhost:3000', 
+  'https://www.sahakarstree.com',  // Allow with www
+  'http://sahakarstree.com',      // Allow without www
+  'http://www.sahakarstree.com',  // Allow with www
   process.env.FRONTEND_URL, 
   process.env.VERCEL_TEST_URL 
 ].filter(Boolean);

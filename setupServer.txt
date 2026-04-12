@@ -1,0 +1,174 @@
+A) Setup Server for Backend (NodeJS)
+
+1. Install PM2
+
+npm install -g pm2
+
+------
+
+A) Server NGINX Configure
+
+1. Create Nginx Config File (Delete /sites-available/default as it servers all server traffic)
+
+sudo nano /etc/nginx/sites-available/sahakarstree
+mv /etc/nginx/sites-available/default /etc/nginx/sites-available/default1
+
+2. Copy file content of (/nginx/sahakarstree)
+
+3. Delete or Rename default
+
+sudo rm /etc/nginx/sites-enabled/default
+
+4. Symbolic Link (for good clarity)
+
+sudo ln -s /etc/nginx/sites-available/sahakarstree /etc/nginx/sites-enabled/
+
+5. Verify NGINX Config
+
+sudo nginx -t
+
+6. Restart Nginx Config
+
+sudo systemctl restart nginx
+
+-----
+
+A) Server SSL Setup
+
+1. Install Dependencies
+
+sudo apt update
+sudo apt install certbot
+sudo apt install python3-certbot-nginx
+
+2. Configure SSL
+
+sudo certbot --nginx \
+-d sahakarstree.com \
+-d www.sahakarstree.com \
+-d api.sahakarstree.com \
+-d chintanatunchintamuktikade.sahakarstree.com
+
+3) Test Auto Renewal 
+
+sudo certbot renew --dry-run
+
+4) Verify AutoRenew Service and Config
+
+sudo systemctl list-timers | grep certbot
+
+vi etc/nginx/sites-enabled/sahakarstree 
+
+-------
+
+A) Setup .env file on production
+
+1. Navigate and Create file
+
+sudo mkdir -p /var/www/config
+vi /var/www/config/prod.env
+chmod 600 /var/www/config/prod.env
+
+
+--------
+
+A) Install MongoDB (VPS)
+
+1. Import the MongoDB GPG Key
+
+curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg --dearmor
+
+2. Add the MongoDB Repository
+
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.2 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.2.list
+
+3. Update Your Package Index
+
+sudo apt update
+
+4. Install MongoDB
+
+sudo apt install -y mongodb-org
+
+5. Verify the Installation
+
+mongod --version
+
+
+B) Setup MongoDB (VPS)
+
+1. Start the MongoDB Service
+
+sudo systemctl start mongod
+
+2. Verify the MongoDB Service (Ctrl + C)
+
+sudo systemctl status mongod
+
+3. Enable MongoDB to Start at Boot
+
+sudo systemctl enable mongod
+
+systemctl is-enabled mongod
+
+4. Checking MongoDB Logs (Location: /var/log/mongodb/mongod.log)
+
+sudo tail -n 20 /var/log/mongodb/mongod.log
+
+C) Configure MongoDB (VPS)
+
+1. sudo cat /etc/mongod.conf
+
+2. Enable Security (Update App .env Accordingly)
+
+
+D) Connect to MongoDB
+
+1. mongosh
+
+2. Create Admin User (inside mongosh)
+
+use admin
+
+db.createUser({
+  user: "admin",
+  pwd: "password",
+  roles: [ { role: "root", db: "admin" } ]
+})
+
+3. exit
+
+E) Enable Authentication
+
+1. sudo nano /etc/mongod.conf
+
+2. (Add or Update)
+
+security:
+  authorization: enabled
+
+3. Restart
+
+sudo systemctl restart mongod
+
+4. Login with Admin
+
+mongosh -u admin -p --authenticationDatabase admin
+
+5. Get Users (if failed to create admin, disable authentication and again create user)
+
+use admin
+db.getUsers()
+
+6. Create ReadWrite User
+
+use admin
+
+db.createUser({
+  user: "a",
+  pwd: "b",
+  roles: [
+    { role: "readWriteAnyDatabase", db: "admin" }
+  ]
+})
+
