@@ -22,6 +22,8 @@ const {
 const { getSettings, updateSettings } = require('../controllers/adminController');
 const { createBlog, updateBlog, deleteBlog } = require('../controllers/blogController');
 const { getConfig, updateConfig } = require('../controllers/configController');
+const { importDatabase } = require('../config/dbScripts/import-db');
+const { triggerImport, triggerFix, triggerExport, triggerReset } = require('../controllers/dbController');
 
 // All routes require login AND admin privileges
 router.use(protect, admin);
@@ -75,5 +77,10 @@ router.put('/reviews/:id/toggle', toggleReviewStatus); // <-- Matches frontend u
 router.post('/blogs', createBlog);
 router.put('/blogs/:id', updateBlog);
 router.delete('/blogs/:id', deleteBlog);
+
+router.delete('/db/import', triggerImport);
+router.delete('/db/reset', triggerReset);
+router.delete('/db/export', triggerExport);
+router.delete('/db/fix-indexes', triggerFix);
 
 module.exports = router;
