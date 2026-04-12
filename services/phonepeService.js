@@ -7,8 +7,8 @@ class PhonePeService {
    */
   static async getEnvConfig(ConfigModel) {
     const config = await ConfigModel.findOne({ singletonId: 'SYSTEM_CONFIG' });
-    const isLive = config?.payment?.isLiveMode || process.env.NODE_ENV === 'production';
-    
+    const isLive = config?.payment?.isLiveMode === true || process.env.PHONEPE_ENV === 'PROD';
+
     return {
       merchantId: config?.payment?.merchantId || process.env.PHONEPE_MERCHANT_ID,
       saltKey: config?.payment?.saltKey || process.env.PHONEPE_SALT_KEY,

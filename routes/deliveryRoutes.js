@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const delhiveryService = require('../services/delhiveryService');
 const Order = require('../models/Order');
-const { protect } = require('../middleware/authMiddleware'); // Your auth middleware
+const { protect } = require('../middlewares/authMiddleware'); // Your auth middleware
 
 // 1. Check Serviceability & Fetch Rate (Called on Frontend Checkout Page)
 router.post('/check-rate', async (req, res) => {

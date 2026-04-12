@@ -42,7 +42,8 @@ const orderSchema = new mongoose.Schema({
     partner: { type: String, default: 'Pending Assign' },
     trackingId: { type: String, default: null },
     awbStatus: { type: String, default: null }, // e.g., 'Manifested', 'In Transit'
-    estimatedDelivery: { type: Date, default: null } // TAT stored here
+    estimatedDelivery: { type: Date, default: null }, // TAT stored here
+    isDispatchedAlertSent: { type: Boolean, default: false }
   },
   
   transitHistory: [{

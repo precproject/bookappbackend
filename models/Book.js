@@ -17,6 +17,7 @@ const bookSchema = new mongoose.Schema({
   stock: { type: Number, default: null }, // Null means infinite (Digital)
   weightInGrams: { type: Number, default: 500 }, // <--- CRITICAL FOR DELHIVERY
   coverImage: { type: String, default: '' },
+  rating: { type: Number, default: 0 },
   history: [historySchema]
 }, { timestamps: true });
 

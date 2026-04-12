@@ -38,18 +38,18 @@ const initializeSystem = async () => {
       // Payment Gateway (PhonePe)
       paymentApi: {
         provider: 'PhonePe',
-        mode: 'UAT', // 'UAT' (test) or 'PROD' (production)
-        merchantId: 'PGTESTPAYUAT',
-        saltKey: '099eb0cd-02cf-4e2a-8aca-3e6c6aff0399', // Replace with production keys later
+        mode: process.env.PHONEPE_ENV || 'UAT',
+        merchantId: process.env.PHONEPE_MERCHANT_ID || '',
+        saltKey: process.env.PHONEPE_SALT_KEY || '',
         saltIndex: '1'
       },
 
       // Delivery/Shipping Gateway (Delhivery)
       deliveryApi: {
         provider: 'Delhivery',
-        mode: 'TEST', // 'TEST' or 'PROD'
-        apiToken: 'YOUR_DELHIVERY_TEST_TOKEN', 
-        pickupPincode: '422001' // E.g., Nashik pincode
+        mode: process.env.DELHIVERY_ENV || 'TEST',
+        apiToken: process.env.DELHIVERY_API_KEY || '',
+        pickupPincode: '422001'
       },
 
       // Social Media Links
@@ -63,9 +63,9 @@ const initializeSystem = async () => {
 
       // Global Contact Info (For Footer / Contact Pages)
       contactInfo: {
-        supportEmail: 'hello@sahakarstree.in',
-        supportPhone: '+919876543210',
-        businessAddress: 'Nashik, Maharashtra, India'
+        supportEmail: process.env.SUPPORT_EMAIL || 'hello@sahakarstree.in',
+        supportPhone:  process.env.SUPPORT_PHONE || '+91-',
+        businessAddress: process.env.SUPPORT_ADDRESS || 'Maharashtra, India'
       }
     };
 
@@ -84,18 +84,21 @@ const initializeSystem = async () => {
     if (!adminExists) {
       console.log('No Admin found. Creating default Super Admin...');
       
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash('Admin@123', salt);
+      const adminEmail = process.env.ADMIN_EMAIL || 'admin@sahakarstree.com';
+      const adminPass = process.env.ADMIN_PASS || 'Admin@123';
+
+      // const salt = await bcrypt.genSalt(10);
+      // const hashedPassword = await bcrypt.hash('Admin@123', salt);
 
       await User.create({
         name: 'Super Admin',
-        email: 'admin@sahakarstree.com',
+        email: adminEmail,
         mobile: '9999999999',
-        password: hashedPassword, // Fixed: Use the hashed password here
+        password: adminPass, // Fixed: Use the hashed password here
         role: 'Admin',
         status: 'Active'
       });
-      console.log('Default Admin Created: admin@sahakarstree.com / Admin@123');
+      console.log('Default Admin Created: ${adminEmail}');
       console.log('PLEASE CHANGE THIS PASSWORD IMMEDIATELY AFTER LOGIN.');
     } else {
       console.log('System verified: Admin user exists.');

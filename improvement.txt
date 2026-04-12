@@ -1,0 +1,7 @@
+Critical Issue 1: The Nginx Rate-Limit Trap
+In server.js, you added express-rate-limit. This is great for security! However, because your Node.js app will be running behind an Nginx reverse proxy on your Hostinger VPS, Express will see every single request as coming from Nginx's IP address (127.0.0.1).
+The Result: If 5 different customers browse your site, they will hit the 100-request limit instantly, and your entire server will block everyone.
+The Fix: You must tell Express to trust the proxy so it reads the actual user's IP from the Nginx headers.
+
+Critical Issue 2: CORS Configuration
+You have origin: '*' combined with credentials: true. Modern browsers (Chrome, Safari) strictly forbid this combination. If you try to log in from the React frontend, the browser will block the cookie/token and throw a CORS error. You must explicitly define your frontend URLs.

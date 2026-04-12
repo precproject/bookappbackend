@@ -6,11 +6,12 @@ const morgan = require('morgan');
 const dotenv = require('dotenv');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
-const initializeSystem = require('./utils/initApp'); // <-- NEW
-const startCronJobs = require('./utils/cronJobs');   // <-- NEW
+const initializeSystem = require('./utils/initApp');
+const startCronJobs = require('./utils/cronJobs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
+// const mongoSanitize = require('express-mongo-sanitize');
+
 // Load env vars
 dotenv.config();
 
@@ -27,6 +28,10 @@ connectDB().then(async () => {
 });
 
 const app = express();
+
+// --- CRITICAL FIX 1: TRUST PROXY FOR VPS ---
+// This ensures rate limiting works per-user, not per-Nginx-server
+app.set('trust proxy', 1);
 
 let server = undefined 
 
@@ -47,7 +52,11 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Security & Middlewares
 app.use(helmet());
-app.use(mongoSanitize()); // Strips out malicious '$' and '.' characters from req.body
+// app.use(
+//   mongoSanitize({
+//     sanitizeQuery: false, // 🔥 critical fix
+//   })
+// );
 
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
   setHeaders: (res, path, stat) => {
@@ -56,6 +65,26 @@ app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
     res.set('Access-Control-Allow-Origin', '*');
   }
 }));
+
+// --- CRITICAL FIX 2: STRICT CORS FOR COOKIES/CREDENTIALS ---
+const allowedOrigins = [
+  'http://localhost:3000', 
+  process.env.FRONTEND_URL, // e.g., https://sahakarstree.in
+  process.env.VERCEL_TEST_URL // e.g., https://your-app.vercel.app
+].filter(Boolean); // Filters out any undefined env variables
+
+// For Production
+// app.use(cors({
+//   origin: function (origin, callback) {
+//     if (!origin || allowedOrigins.includes(origin)) {
+//       callback(null, true);
+//     } else {
+//       callback(new Error('Not allowed by CORS'));
+//     }
+//   },
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+//   credentials: true
+// }));
 
 // app.use(cors());
 app.use(cors({
@@ -116,6 +145,7 @@ app.use('/api/user', require('./routes/userRoutes'));
 app.use('/api/blogs', require('./routes/blogRoutes'));
 app.use('/api/config', require('./routes/configRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
+app.use('/api/delivery', require('./routes/deliveryRoutes'));
 
 // Global Error Handler
 app.use((err, req, res, next) => {

@@ -45,10 +45,14 @@ exports.processAndSaveImage = async (req, res) => {
       .toFile(outputPath);
 
     // Automatically build the correct URL (Works for both localhost and live domain)
-    const protocol = req.protocol;
-    const host = req.get('host');
-    const fullUrl = `${protocol}://${host}/uploads/${uniqueName}`;
+    // const protocol = req.protocol;
+    // const host = req.get('host');
+    // const fullUrl = `${protocol}://${host}/uploads/${uniqueName}`;
 
+
+    const baseUrl = process.env.API_BASE_URL || 'http://localhost:5001';
+    const fullUrl = `${baseUrl}/uploads/${uniqueName}`;
+    
     res.status(200).json({
       message: 'Image uploaded securely',
       imageUrl: fullUrl

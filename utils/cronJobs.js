@@ -6,7 +6,7 @@ const Order = require('../models/Order');
 const Book = require('../models/Book');
 const Referral = require('../models/Referral');
 const Config = require('../models/Config');
-const PhonePeService = require('./phonepeService'); // Re-using your existing service!
+const PhonePeService = require('../services/phonepeService'); // Re-using your existing service!
 
 const startCronJobs = () => {
   console.log('⏳ Store Manager (Cron Jobs) Initialized.');
@@ -92,18 +92,34 @@ const startCronJobs = () => {
             order.payment.method = data.paymentInstrument?.type || 'Auto-Recovery';
             order.transitHistory.push({ stage: 'Payment Verified (Auto-Recovery)', time: Date.now(), completed: true });
             
-            // 2. CRITICAL: Take the book off the physical shelf!
+            // 2. OLD CRITICAL: Take the book off the physical shelf!
+            // for (const item of order.items) {
+            //   const book = await Book.findOne({ _id: item.book, type: 'Physical', stock: { $gte: item.qty } });
+            //   if (book) {
+            //     book.stock -= item.qty;
+            //     book.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId} (Auto-Recovered)`, change: -item.qty, balance: book.stock });
+            //     await book.save();
+            //   } else {
+            //     order.notes = (order.notes || '') + ` [System Note: Recovered payment, but book ran out of stock!]`;
+            //   }
+            // }
+
+            // 2. FIX THE INVENTORY DEDUCTION (Make it atomic)
             for (const item of order.items) {
-              const book = await Book.findOne({ _id: item.book, type: 'Physical', stock: { $gte: item.qty } });
-              if (book) {
-                book.stock -= item.qty;
-                book.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId} (Auto-Recovered)`, change: -item.qty, balance: book.stock });
-                await book.save();
+              const updatedBook = await Book.findOneAndUpdate(
+                { _id: item.book, type: 'Physical', stock: { $gte: item.qty } },
+                { $inc: { stock: -item.qty } },
+                { new: true }
+              );
+              
+              if (updatedBook) {
+                updatedBook.history.unshift({ type: 'Deduction', reason: `Order #${order.orderId} (Auto-Recovered)`, change: -item.qty, balance: updatedBook.stock });
+                await updatedBook.save();
               } else {
                 order.notes = (order.notes || '') + ` [System Note: Recovered payment, but book ran out of stock!]`;
               }
             }
-
+            
             // 3. Give the friend their referral reward
             if (order.priceBreakup.referralApplied) {
               const refDoc = await Referral.findOne({ code: order.priceBreakup.referralApplied });

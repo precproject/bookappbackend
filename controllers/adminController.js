@@ -734,8 +734,10 @@ exports.adminResetUserPassword = async (req, res) => {
     user.password = newPassword; // Mongoose pre-save hook will hash this automatically
     await user.save();
 
-    const adminEmail = "vaibhavdesign@gmail.com";
-    
+    // Pull from ENV, fallback to the database config if ENV is missing, fallback to hardcode as absolute last resort
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    const adminEmail = process.env.ADMIN_NOTIFY_EMAIL || systemConfig?.general?.supportEmail || 'vaibhavdesign@gmail.com';
+
     await sendEmail({
       to: adminEmail,
       subject: `Password Reset Alert: ${user.email}`,

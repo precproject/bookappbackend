@@ -245,8 +245,12 @@ exports.createAdmin = async (req, res) => {
 
     // 1. Get the current master key from the database
     const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
-    const requiredSecret = systemConfig?.security?.adminMasterSecret || 'SahakarStree@123';
+    const requiredSecret = systemConfig?.security?.adminMasterSecret || process.env.ADMIN_MASTER_SECRET;
 
+    if (!requiredSecret) {
+     return res.status(500).json({ message: 'Server configuration error: Master secret not set.' });
+    }
+    
     // 2. Check if the person provided the correct key
     if (masterSecret !== requiredSecret) {
       return res.status(403).json({ message: 'You do not have permission to create an Admin account.' });

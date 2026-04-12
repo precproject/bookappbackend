@@ -173,3 +173,23 @@ exports.deleteReview = async (req, res) => {
     res.status(500).json({ message: 'Server error deleting review' });
   }
 };
+
+// @route   GET /api/public/
+// @desc    Check if a referral code is valid and get the referrer's name
+exports.verifyReferralCode =  async (req, res) => {
+  try {
+    const code = req.params.code.toUpperCase();
+    const referral = await Referral.findOne({ code, status: 'Active' }).populate('user', 'name');
+    
+    if (!referral) {
+      return res.status(404).json({ valid: false, message: 'Invalid or expired code' });
+    }
+
+    res.status(200).json({ 
+      valid: true, 
+      referrerName: referral.user.name.split(' ')[0] // Just send the first name for privacy
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error during verification' });
+  }
+};

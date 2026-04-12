@@ -5,6 +5,7 @@ const Referral = require('../models/Referral');
 const Config = require('../models/Config'); // <-- Added Config Import
 const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
+const { processSuccessfulPayment } = require('../services/orderService');
 
 // @route   POST /api/webhooks/phonepe
 // @desc    Receive payment update from PhonePe

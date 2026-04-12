@@ -20,8 +20,9 @@ router.get('/public', getPublicConfig);
 // GET /api/config
 // PUT /api/config
 // ----------------------------------------------------
-router.route('/')
-  .get(protect, admin, getConfig)
-  .put(protect, admin, updateConfig);
+// router.route('/')
+//   .get(protect, admin, getConfig)
+//   .put(protect, admin, updateConfig);
+// Duplicate in AdminRoutes and Frontend Reference
 
 module.exports = router;
