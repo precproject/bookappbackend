@@ -7,7 +7,6 @@ const dotenv = require('dotenv');
 const path = require('path');
 const { Server } = require('socket.io');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
 
 const connectDB = require('./config/db');
 const initializeSystem = require('./utils/initApp');
@@ -45,8 +44,6 @@ app.set('trust proxy', 1);
 // Helmet secures HTTP headers. Disable CORP globally so our static image uploads work.
 app.use(helmet({ crossOriginResourcePolicy: false })); 
 
-// Prevent NoSQL Injection attacks
-app.use(mongoSanitize({ sanitizeQuery: false }));
 
 // Strict CORS for Production, relaxed for Development
 const allowedOrigins = [
