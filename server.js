@@ -4,141 +4,131 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
+const path = require('path');
 const { Server } = require('socket.io');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
+
 const connectDB = require('./config/db');
 const initializeSystem = require('./utils/initApp');
-const startCronJobs = require('./utils/cronJobs');
-const path = require('path');
-const rateLimit = require('express-rate-limit');
-// const mongoSanitize = require('express-mongo-sanitize');
+const startCronJobs = require('./utils/cronJobs'); // <-- Imported successfully
 
-// Load env vars
+// ==========================================
+// 1. ENVIRONMENT & DATABASE
+// ==========================================
 dotenv.config();
 
-// Connect to database and initialize system
-// (In Vercel, this runs during the "cold start" of the function)
 connectDB().then(async () => {
-  await initializeSystem(); // Ensure default Admin & Config exists
+  await initializeSystem();
   
-  //startCronJobs();          // Start background workers
-  // NOTE FOR VERCEL: 
-  // startCronJobs() is removed because Vercel serverless functions go to sleep,
-  // killing background tasks. If you need scheduled tasks later, you will use 
-  // Vercel Cron to hit a specific API endpoint (e.g., GET /api/cron/sweep-payments).
+  // CRITICAL FIX: Only start cron jobs on persistent servers (Local or VPS)
+  // Vercel serverless functions sleep, which kills background cron tasks.
+  if (!process.env.VERCEL) {
+    startCronJobs(); 
+  }
 });
 
+// ==========================================
+// 2. APP INITIALIZATION
+// ==========================================
 const app = express();
 
-// --- CRITICAL FIX 1: TRUST PROXY FOR VPS ---
-// This ensures rate limiting works per-user, not per-Nginx-server
-app.set('trust proxy', 1);
+// Create HTTP server safely for all environments
+const server = http.createServer(app);
 
-let server = undefined 
+// Trust proxy is CRITICAL for Vercel and VPS Nginx to get correct client IPs for rate limiting
+app.set('trust proxy', 1); 
 
-if (process.env.NODE_ENV !== 'production') {
-      server = http.createServer(app);
+// ==========================================
+// 3. SECURITY & MIDDLEWARES
+// ==========================================
+// Helmet secures HTTP headers. Disable CORP globally so our static image uploads work.
+app.use(helmet({ crossOriginResourcePolicy: false })); 
+
+// Prevent NoSQL Injection attacks
+app.use(mongoSanitize({ sanitizeQuery: false }));
+
+// Strict CORS for Production, relaxed for Development
+const allowedOrigins = [
+  'http://localhost:3000', 
+  process.env.FRONTEND_URL, 
+  process.env.VERCEL_TEST_URL 
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow if in allowed list, OR if it's local development, OR if no origin (server-to-server)
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  credentials: true
+}));
+
+// Body Parsers (1mb limit to prevent massive payload crashing)
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// HTTP Request Logger for Development only
+if (process.env.NODE_ENV === 'development') {
+  app.use(morgan('dev'));
 }
 
-// Configure Socket.io for Real-time Webhook updates to frontend
-// const io = new Server(server, {
-//   cors: {
-//     origin: '*', // We will restrict this to your frontend domain in production
-//     methods: ['GET', 'POST']
-//   }
-// });
-
-// Make io accessible globally to controllers
-// app.set('io', io);
-
-// Security & Middlewares
-app.use(helmet());
-// app.use(
-//   mongoSanitize({
-//     sanitizeQuery: false, // 🔥 critical fix
-//   })
-// );
-
+// Serve Static Images securely
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
-  setHeaders: (res, path, stat) => {
-    // This tells the browser: "It is 100% safe to show this image on the React frontend!"
+  setHeaders: (res) => {
     res.set('Cross-Origin-Resource-Policy', 'cross-origin');
     res.set('Access-Control-Allow-Origin', '*');
   }
 }));
 
-// --- CRITICAL FIX 2: STRICT CORS FOR COOKIES/CREDENTIALS ---
-const allowedOrigins = [
-  'http://localhost:3000', 
-  process.env.FRONTEND_URL, // e.g., https://sahakarstree.in
-  process.env.VERCEL_TEST_URL // e.g., https://your-app.vercel.app
-].filter(Boolean); // Filters out any undefined env variables
-
-// For Production
-// app.use(cors({
-//   origin: function (origin, callback) {
-//     if (!origin || allowedOrigins.includes(origin)) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error('Not allowed by CORS'));
-//     }
-//   },
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-//   credentials: true
-// }));
-
-// app.use(cors());
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
-}));
-
-// Crucial for Webhooks: We need raw body for signature verification for gateways like Stripe/PhonePe
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-}
-
-// Socket connection logic
-// io.on('connection', (socket) => {
-//   console.log(`New client connected: ${socket.id}`);
-  
-//   // A user on the checkout page can join a "room" using their Order ID
-//   socket.on('joinOrderRoom', (orderId) => {
-//     socket.join(orderId);
-//     console.log(`Socket joined order room: ${orderId}`);
-//   });
-
-//   socket.on('disconnect', () => {
-//     console.log(`Client disconnected: ${socket.id}`);
-//   });
-// });
-
-// Limit API to 100 requests per 15 minutes per IP
+// ==========================================
+// 4. RATE LIMITING
+// ==========================================
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 100,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 150, // Allow 150 requests per IP
   message: 'Too many requests from this IP, please try again after 15 minutes'
 });
 
 app.use('/api/', apiLimiter);
 
-// Basic Route for testing
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'success', message: 'API is running perfectly.' });
-});
-// Health check
-app.get('/', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// ==========================================
+// 5. WEBSOCKETS (Socket.io)
+// ==========================================
+// CRITICAL FIX: WebSockets do not work on Vercel Serverless. We only boot them on Local/VPS.
+if (!process.env.VERCEL) {
+  const io = new Server(server, {
+    cors: {
+      origin: allowedOrigins,
+      methods: ['GET', 'POST'],
+      credentials: true
+    }
+  });
+  
+  app.set('io', io); // Make available to controllers via req.app.get('io')
 
-// We will mount our routes here in Phase 2
+  io.on('connection', (socket) => {
+    // console.log(`New client connected: ${socket.id}`);
+    socket.on('joinOrderRoom', (orderId) => {
+      socket.join(orderId);
+    });
+  });
+}
+
+// ==========================================
+// 6. ROUTES
+// ==========================================
+app.get('/api/health', (req, res) => res.status(200).json({ status: 'success', message: 'API is healthy.' }));
+app.get('/', (req, res) => res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() }));
+
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/webhooks', require('./routes/webhookRoutes'));
-app.use('/api/admin', require('./routes/adminRoutes')); // <-- NEW
-app.use('/api/orders', require('./routes/orderRoutes')); // <-- ADDED THIS
+app.use('/api/admin', require('./routes/adminRoutes')); 
+app.use('/api/orders', require('./routes/orderRoutes')); 
 app.use('/api/public', require('./routes/publicRoutes'));
 app.use('/api/discounts', require('./routes/discountRoutes'));
 app.use('/api/user', require('./routes/userRoutes'));
@@ -147,24 +137,29 @@ app.use('/api/config', require('./routes/configRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
 app.use('/api/delivery', require('./routes/deliveryRoutes'));
 
-// Global Error Handler
+// ==========================================
+// 7. GLOBAL ERROR HANDLER
+// ==========================================
 app.use((err, req, res, next) => {
+  console.error(err.stack); // Log in backend console for debugging
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
   res.status(statusCode).json({
     message: err.message,
+    // Hide stack traces in production to prevent leaking server paths
     stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
 });
 
-// FOR SERVER / VPC - Enable this
-if (process.env.NODE_ENV !== 'production') {
+// ==========================================
+// 8. SERVER BOOT
+// ==========================================
+// IMPORTANT FOR VERCEL: We export the app. Vercel maps it automatically to serverless functions.
+// IMPORTANT FOR VPS/LOCAL: We tell the HTTP server to actively listen on a port.
+if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5001;
   server.listen(PORT, () => {
-    console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+    console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   });
 }
 
-// IMPORTANT FOR VERCEL: 
-// We DO NOT use app.listen(PORT). Instead, we export the Express app.
-// Vercel will automatically map incoming HTTP requests to this exported app.
 module.exports = app;

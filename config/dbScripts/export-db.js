@@ -1,13 +1,13 @@
 const fs = require('fs').promises;
 const path = require('path');
-const User = require('../models/User');
-const Book = require('../models/Book');
-const Order = require('../models/Order');
-const Referral = require('../models/Referral');
-const Discount = require('../models/Discount');
-const Config = require('../models/Config');
-const Review = require('../models/Review');
-const Blog = require('../models/Blog');
+const User = require('../../models/User');
+const Book = require('../../models/Book');
+const Order = require('../../models/Order');
+const Referral = require('../../models/Referral');
+const Discount = require('../../models/Discount');
+const Config = require('../../models/Config');
+const Review = require('../../models/Review');
+const Blog = require('../../models/Blog');
 
 const exportDatabase = async () => {
   try {
