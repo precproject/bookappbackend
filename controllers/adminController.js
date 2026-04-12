@@ -5,7 +5,7 @@ const Discount = require('../models/Discount');
 const Referral = require('../models/Referral');
 const Config = require('../models/Config');
 const Review = require('../models/Review');
-const { sendEmail } = require('../utils/email');
+const sendEmail = require('../utils/sendEmail');
 const crypto = require('crypto');
 
 // --- DASHBOARD HOME ---
