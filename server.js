@@ -12,6 +12,8 @@ const connectDB = require('./config/db');
 const initializeSystem = require('./utils/initApp');
 const startCronJobs = require('./utils/cronJobs'); // <-- Imported successfully
 
+const stats = {};
+
 // ==========================================
 // 1. ENVIRONMENT & DATABASE
 // ==========================================
@@ -93,7 +95,16 @@ app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 150, // Allow 150 requests per IP
-  message: 'Too many requests from this IP, please try again after 15 minutes'
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  keyGenerator: (req) => req.ip,
+  handler: (req, res) => {
+    stats[req.ip] = (stats[req.ip] || 0) + 1;
+    res.status(429).send('Too many requests');
+  }
+});
+
+app.get('/stats', (req, res) => {
+  res.json(stats);
 });
 
 app.use('/api/', apiLimiter);

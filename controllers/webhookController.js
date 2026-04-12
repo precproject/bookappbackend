@@ -77,14 +77,14 @@ exports.deliveryWebhook = async (req, res) => {
       order.transitHistory.push({ stage: 'Package Delivered', time: new Date(status_dateTime), completed: true });
       
       if (config?.emailAlerts?.orderDelivered !== false) {
-        sendEmail({ to: order.user.email, subject: `Order Delivered - #${order.orderId}`, html: templates.deliverySuccessEmail(order.orderId) }).catch(console.error);
+        sendEmail({ to: order.user.email, subject: `तुमची ऑर्डर पोहोचली! - #${order.orderId} | Order Delivered`, html: templates.deliverySuccessEmail(order.orderId) }).catch(console.error);
       }
     } 
     else if ((statusLower.includes('dispatched') || statusLower.includes('in transit')) && !order.shipping.isDispatchedAlertSent) {
       order.shipping.isDispatchedAlertSent = true; 
       
       if (config?.emailAlerts?.orderDispatched !== false) {
-        sendEmail({ to: order.user.email, subject: `Order Dispatched - #${order.orderId}`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
+        sendEmail({ to: order.user.email, subject: `तुमची ऑर्डर पाठवली आहे! - #${order.orderId} | Order Dispatched`, html: templates.orderDispatchedEmail(order.orderId, order.shipping.trackingId, order.shipping.partner) }).catch(console.error);
       }
     }
 

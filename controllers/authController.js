@@ -68,7 +68,7 @@ exports.prebookUser = async (req, res) => {
       
       sendEmail({ 
         to: user.email, 
-        subject: `Welcome to the Waitlist for ${storeName}`, 
+        subject: `तुम्ही प्रतीक्षा यादीत आहात! | Welcome to the Waitlist for ${storeName}`, 
         html: templates.prebookEmail(user.name, storeName) // Perfectly utilizing the standard structure
       }).catch(console.error);
     }
@@ -114,7 +114,7 @@ exports.registerUser = async (req, res) => {
     if (systemConfig?.emailAlerts?.welcome !== false) {
       sendEmail({ 
         to: user.email, 
-        subject: `Welcome to ${process.env.STORE_NAME}`, 
+        subject: `सहकार स्त्री मध्ये आपले स्वागत आहे! | Welcome to ${process.env.STORE_NAME}`, 
         html: templates.welcomeEmail(user.name) 
       }).catch(console.error);
     }

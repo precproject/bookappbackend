@@ -11,6 +11,12 @@ const historySchema = new mongoose.Schema({
 const bookSchema = new mongoose.Schema({
   sku: { type: String, required: true, unique: true },
   title: { type: String, required: true },
+
+  // ---> NEW FIELDS <---
+  author: { type: String, required: true, default: 'SahakarStree' },
+  publisher: { type: String, default: 'Independent' }, // Optional default
+  status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' }, // To hide/show easily
+
   description: { type: String, required: true },
   type: { type: String, enum: ['Physical', 'Digital'], required: true },
   price: { type: Number, required: true, min: 0 },

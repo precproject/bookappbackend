@@ -120,7 +120,7 @@ exports.createOrder = async (req, res) => {
     if (systemConfig?.emailAlerts?.orderPlaced !== false) {
       sendEmail({ 
         to: req.user.email, 
-        subject: `Order Initiated - #${order.orderId}`, 
+        subject: `ऑर्डर सुरू झाली - #${order.orderId} | Order Initiated`, 
         html: templates.orderPlacedEmail(order, req.user.name) 
       }).catch(console.error);
     }

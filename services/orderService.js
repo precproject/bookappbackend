@@ -80,7 +80,7 @@ exports.processSuccessfulPayment = async (order, transactionId, paymentMethod, c
   if (config?.emailAlerts?.paymentSuccess !== false) {
     sendEmail({ 
       to: order.user.email, 
-      subject: `Payment Confirmed - #${order.orderId}`, 
+      subject: `पेमेंट यशस्वी - #${order.orderId} | Payment Confirmed`, 
       html: templates.paymentSuccessEmail(order, order.user.name) 
     }).catch(console.error);
   }
