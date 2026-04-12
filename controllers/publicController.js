@@ -62,8 +62,12 @@ const buildBookQuery = (identifier) => {
 // @desc    Get all active books for the store
 exports.getAllBooks = async (req, res) => {
   try {
-    // Optionally filter by { status: 'Active' } if you have a status field
-    const books = await Book.find().sort({ createdAt: -1 });
+    // 1. Only fetch books marked as 'Active'
+    // 2. Hide the private admin 'history' array and mongo '__v' version key
+    const books = await Book.find({ status: 'Active' })
+      .select('-history -__v')
+      .sort({ createdAt: -1 });
+      
     res.status(200).json(books);
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch books', error: error.message });
@@ -75,9 +79,16 @@ exports.getAllBooks = async (req, res) => {
 exports.getBookByIdOrSku = async (req, res) => {
   try {
     const query = buildBookQuery(req.params.id);
-    const book = await Book.findOne(query);
+    
+    // Ensure we hide the private history here as well!
+    const book = await Book.findOne(query).select('-history -__v');
 
     if (!book) return res.status(404).json({ message: 'Book not found' });
+    
+    // Optional Safety: If an admin hides a book, stop public users from viewing its direct link
+    if (book.status === 'Inactive') {
+      return res.status(404).json({ message: 'This book is currently unavailable' });
+    }
 
     res.status(200).json(book);
   } catch (error) {

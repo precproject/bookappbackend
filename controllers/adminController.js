@@ -254,7 +254,7 @@ exports.getInventory = async (req, res) => {
 // @route   POST /api/admin/inventory
 exports.addBook = async (req, res) => {
   try {
-    const { sku, title, description, type, price, stock, weightInGrams, coverImage } = req.body;
+    const { sku, title, author, publisher, status, description, type, price, stock, weightInGrams, coverImage } = req.body;
 
     const existingBook = await Book.findOne({ sku: sku.toUpperCase() });
     if (existingBook) return res.status(400).json({ message: 'SKU already exists. Please use a unique SKU.' });
@@ -263,7 +263,7 @@ exports.addBook = async (req, res) => {
 
     const book = await Book.create({
       sku: sku.toUpperCase(),
-      title, description, type, price, weightInGrams, coverImage,
+      title, description, type, price, weightInGrams, coverImage, author, publisher, status,
       stock: initialStock,
       history: [{ 
         type: 'Creation', 
@@ -284,7 +284,11 @@ exports.updateBook = async (req, res) => {
     const book = await Book.findById(req.params.id);
     if (!book) return res.status(404).json({ message: 'Book not found' });
 
-    const { sku, type, stock, weightInGrams } = req.body;
+    // Explicitly destructure ALL allowed fields
+    const { 
+      sku, title, description, coverImage, price, // <-- Safely added these
+      type, stock, weightInGrams, status, author, publisher 
+    } = req.body;
 
     // Check for SKU collision if they changed the SKU
     if (sku && sku.toUpperCase() !== book.sku) {
@@ -313,9 +317,18 @@ exports.updateBook = async (req, res) => {
       });
     }
 
-    // Apply updates
-    Object.assign(book, req.body);
+    // Apply updates explicitly (Prevents Mass Assignment vulnerabilities)
+    if (title) book.title = title;
+    if (description) book.description = description;
+    if (coverImage) book.coverImage = coverImage;
+    if (price !== undefined) book.price = Number(price);
+    if (author) book.author = author;
+    if (publisher) book.publisher = publisher;
+    if (status) book.status = status;
+    
+    // Technical overrides
     book.sku = sku ? sku.toUpperCase() : book.sku;
+    book.type = type || book.type;
     book.stock = newStock;
     book.weightInGrams = type === 'Digital' ? 0 : (weightInGrams || 500);
     
