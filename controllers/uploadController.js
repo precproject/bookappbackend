@@ -5,7 +5,7 @@ const fs = require('fs');
 
 // Ensure the folder for saving images exists
 const uploadDir = path.join(__dirname, '../public/uploads');
-if (process.env.NODE_ENV === 'development') {
+if (process.env.NODE_ENV === 'production') {
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
