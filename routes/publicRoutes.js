@@ -8,7 +8,7 @@ const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/recent-purchases', getRecentPurchases);
 // Book Catalog
-// router.get('/books', getAllBooks); <= Declared twice or unused or combine with 
+ router.get('/books', getAllBooks); 
 
 // Single Book Details (Accepts :id as MongoDB ID or SKU String)
 router.get('/books/:id', getBookByIdOrSku);
