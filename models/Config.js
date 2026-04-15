@@ -41,10 +41,12 @@ const configSchema = new mongoose.Schema({
   // 5. Payment API (Original + expanded)
   payment: {
     provider: { type: String, default: 'PhonePe' },
-    merchantId: { type: String, default: '' },
-    saltKey: { type: String, default: '' },
-    saltIndex: { type: Number, default: 1 },
-    isLiveMode: { type: Boolean, default: false } // False = UAT, True = PROD
+    clientId: { type: String, default: '' },        // Replaces merchantId
+    clientSecret: { type: String, default: '' },    // Replaces saltKey
+    clientVersion: { type: String, default: '1' },  // Replaces saltIndex
+    webhookUsername: { type: String, default: '' }, // NEW: Required for V2 Webhooks
+    webhookPassword: { type: String, default: '' }, // NEW: Required for V2 Webhooks
+    isLiveMode: { type: Boolean, default: false }
   },
 
   // 6. Delivery API (Original + expanded)

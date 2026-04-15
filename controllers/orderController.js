@@ -117,14 +117,6 @@ exports.createOrder = async (req, res) => {
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
 
-    if (systemConfig?.emailAlerts?.orderPlaced !== false) {
-      sendEmail({ 
-        to: req.user.email, 
-        subject: `ऑर्डर सुरू झाली - #${order.orderId} | Order Initiated`, 
-        html: templates.orderPlacedEmail(order, req.user.name) 
-      }).catch(console.error);
-    }
-
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 
@@ -134,6 +126,7 @@ exports.createOrder = async (req, res) => {
     }
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
+    console.log(payEnv)
     if (!payEnv.merchantId) return res.status(500).json({ message: 'Payment gateway is not configured.' });
 
     const redirectUrl = await PhonePeService.initiatePayment({
@@ -145,6 +138,14 @@ exports.createOrder = async (req, res) => {
       callbackUrl: `${apiUrl}/api/orders/webhook/phonepe`,
       env: payEnv
     });
+
+    if (systemConfig?.emailAlerts?.orderPlaced !== false) {
+      sendEmail({ 
+        to: req.user.email, 
+        subject: `ऑर्डर सुरू झाली - #${order.orderId} | Order Initiated`, 
+        html: templates.orderPlacedEmail(order, req.user.name) 
+      }).catch(console.error);
+    }
 
     res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl } });
 

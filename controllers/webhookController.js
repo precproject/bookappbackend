@@ -23,7 +23,10 @@ exports.phonepeWebhook = async (req, res) => {
     // 2. Validate Authorization Header (SHA256 of username:password)
     const expectedHash = crypto.createHash('sha256').update(`${webhookUser}:${webhookPass}`).digest('hex');
     
-    if (authHeader !== expectedHash && authHeader !== `SHA256(${expectedHash})`) {
+    // Some platforms strip the "Basic" or "SHA256" text from the header, so we clean it for strict comparison
+    const providedHash = authHeader ? authHeader.replace(/Basic |Bearer |SHA256\(/gi, '').replace(/\)/g, '').trim() : '';
+
+    if (providedHash !== expectedHash) {
       console.error('[PhonePe V2 Webhook] SECURITY ALERT: Invalid Webhook Authentication');
       return res.status(401).send('Unauthorized Signature');
     }
@@ -38,8 +41,8 @@ exports.phonepeWebhook = async (req, res) => {
       return res.status(200).send('Event Ignored'); // Acknowledge safely
     }
 
-    // Per documentation: Rely only on root-level payload.state
-    const { merchantOrderId, state } = payload;
+    // Per V2 documentation: Rely only on root-level payload.state
+    const { merchantOrderId, state, transactionId } = payload;
 
     if (!merchantOrderId) {
       return res.status(400).send('Missing Order ID in Payload');
@@ -53,7 +56,7 @@ exports.phonepeWebhook = async (req, res) => {
       return res.status(404).send('Order not found');
     }
 
-    // 5. Idempotency Check (PhonePe often sends duplicates)
+    // 5. Idempotency Check (PhonePe often sends duplicate webhooks)
     if (order.payment?.status === 'Success' || order.status === 'In Progress' || order.status === 'Delivered') {
       console.log(`[PhonePe V2 Webhook] Order #${merchantOrderId} already processed.`);
       return res.status(200).send('OK'); 
@@ -65,7 +68,7 @@ exports.phonepeWebhook = async (req, res) => {
     if (state === 'COMPLETED') {
       
       // Update inventory, referral rewards, and send emails
-      await processSuccessfulPayment(order, payload.transactionId || merchantOrderId, 'PhonePe', config);
+      await processSuccessfulPayment(order, transactionId || merchantOrderId, 'PhonePe', config);
       
       if (io) io.to(order.orderId).emit('paymentStatusUpdate', { status: 'Success', orderId: order.orderId });
       console.log(`[PhonePe V2 Webhook] Order #${merchantOrderId} Payment COMPLETED`);

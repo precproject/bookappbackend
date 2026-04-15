@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-// In-memory cache for the OAuth Token to prevent hitting rate limits
+// In-memory cache for the OAuth Token to prevent rate limiting
 let cachedToken = null;
 let tokenExpiryTime = null;
 
@@ -12,12 +12,12 @@ class PhonePeService {
     const config = await ConfigModel.findOne({ singletonId: 'SYSTEM_CONFIG' });
     const isLive = config?.payment?.isLiveMode === true || process.env.PHONEPE_ENV === 'PROD';
 
-    // Base URLs explicitly defined per V2 Documentation
     return {
       clientId: config?.payment?.clientId || process.env.PHONEPE_CLIENT_ID,
       clientSecret: config?.payment?.clientSecret || process.env.PHONEPE_CLIENT_SECRET,
       clientVersion: config?.payment?.clientVersion || process.env.PHONEPE_CLIENT_VERSION || '1',
       
+      // Base URLs explicitly defined per V2 Documentation
       authBaseUrl: isLive 
         ? 'https://api.phonepe.com/apis/identity-manager' 
         : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
@@ -35,12 +35,12 @@ class PhonePeService {
    * Ref: POST /v1/oauth/token
    */
   static async getAccessToken(env) {
-    // Return cached token if it is still valid (adding a 60-second safety buffer)
+    // Return cached token if valid (with 60-second safety buffer)
     if (cachedToken && tokenExpiryTime && Date.now() < (tokenExpiryTime - 60000)) {
       return cachedToken;
     }
 
-    // Must be sent as URL Encoded Data per documentation
+    // PhonePe V2 requires application/x-www-form-urlencoded
     const payload = new URLSearchParams({
       client_id: env.clientId,
       client_secret: env.clientSecret,
@@ -54,8 +54,7 @@ class PhonePeService {
       });
 
       cachedToken = response.data.access_token;
-      // issued_at is in seconds, expires_in is in seconds. Convert to milliseconds.
-      tokenExpiryTime = (response.data.issued_at + response.data.expires_in) * 1000; 
+      tokenExpiryTime = Date.now() + (response.data.expires_in * 1000); 
 
       return cachedToken;
     } catch (error) {
@@ -71,7 +70,7 @@ class PhonePeService {
   static async initiatePayment({ orderId, amount, redirectUrl, env }) {
     const token = await this.getAccessToken(env);
     
-    // V2 Payload Structure - Direct JSON, no Base64!
+    // V2 Payload Structure - Direct JSON, no Base64 required!
     const payload = {
       merchantOrderId: orderId.toString(),
       amount: Math.round(amount * 100), // Strictly in paisa
@@ -81,6 +80,7 @@ class PhonePeService {
           redirectUrl: redirectUrl
         }
       }
+      // Note: callbackUrl is NOT sent here in V2. It is set in your PhonePe Dashboard.
     };
 
     try {
