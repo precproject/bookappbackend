@@ -35,12 +35,11 @@ class PhonePeService {
    * Ref: POST /v1/oauth/token
    */
   static async getAccessToken(env) {
-    console.log(1)
+
     // Return cached token if valid (with 60-second safety buffer)
     if (cachedToken && tokenExpiryTime && Date.now() < (tokenExpiryTime - 60000)) {
       return cachedToken;
     }
-    console.log(2)
 
     // PhonePe V2 requires application/x-www-form-urlencoded
     const payload = new URLSearchParams({
@@ -49,9 +48,7 @@ class PhonePeService {
       client_version: env.clientVersion,
       grant_type: 'client_credentials'
     });
-    console.log(payload)
-    console.log(env)
-    console.log("${env.authBaseUrl}/v1/oauth/token")
+
     try {
       const response = await axios.post(`${env.authBaseUrl}/v1/oauth/token`, payload, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }

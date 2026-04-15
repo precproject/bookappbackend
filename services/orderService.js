@@ -56,13 +56,14 @@ exports.processSuccessfulPayment = async (order, transactionId, paymentMethod, c
     }
   }
 
+  console.log(hasPhysicalItems)
   // 3. Automate Delhivery AWB
   if (hasPhysicalItems) {
     await order.populate('items.book'); 
     
     // Calls your Delhivery Service directly
     const shipment = await delhiveryService.createShipment(order, order.items);
-    
+
     if (shipment.success) {
       order.shipping.partner = 'Delhivery';
       order.shipping.trackingId = shipment.awb;
@@ -70,6 +71,7 @@ exports.processSuccessfulPayment = async (order, transactionId, paymentMethod, c
       if (shipment.estimatedDelivery) order.shipping.estimatedDelivery = new Date(shipment.estimatedDelivery);
       order.transitHistory.push({ stage: `Shipment Created (AWB: ${shipment.awb})`, time: Date.now(), completed: true });
     } else {
+      order.transitHistory.push({ stage: `Waiting for Delivery Partner`, time: Date.now(), completed: true });
       order.notes = (order.notes || '') + ` [Delhivery Error: ${shipment.error}. Requires manual AWB generation.]`;
     }
   }
