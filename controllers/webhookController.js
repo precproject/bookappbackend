@@ -7,11 +7,6 @@ const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 const { processSuccessfulPayment } = require('../services/orderService');
 
-const crypto = require('crypto');
-const Order = require('../models/Order');
-const Config = require('../models/Config');
-const { processSuccessfulPayment } = require('../services/orderService');
-
 // @route   POST /api/webhooks/phonepe
 // @desc    Receive Server-to-Server (S2S) payment updates from PhonePe
 exports.phonepeWebhook = async (req, res) => {
