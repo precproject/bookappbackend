@@ -7,9 +7,8 @@ const Config = require('../models/Config');
 const sendEmail = require('../utils/sendEmail');
 const templates = require('../utils/emailTemplates');
 const PhonePeService = require('../services/phonepeService');
-const delhiveryService = require('../services/delhiveryService'); // <-- Import Delhivery
+const delhiveryService = require('../services/delhiveryService'); 
 const { processSuccessfulPayment } = require('../services/orderService');
-
 
 // --- CREATE ORDER (The Cashier Calculates the Bill) ---
 exports.createOrder = async (req, res) => {
@@ -75,7 +74,6 @@ exports.createOrder = async (req, res) => {
 
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
-    // --- THE FIX: FORMAT THE SHIPPING OBJECT CORRECTLY FOR MONGOOSE ---
     let shippingData = undefined;
 
     if (hasPhysicalItem) {
@@ -93,10 +91,9 @@ exports.createOrder = async (req, res) => {
         trackingId: null
       };
     } else {
-      // Digital Orders: Mongoose requires these fields, so we fill them with safe system fallbacks
       shippingData = {
-        fullName: req.user.name,      // Pull real name from logged-in user
-        phone: req.user.mobile,       // Pull real mobile from logged-in user
+        fullName: req.user.name,
+        phone: req.user.mobile,
         street: 'Digital Delivery',
         city: 'Digital',
         state: 'Digital',
@@ -106,36 +103,34 @@ exports.createOrder = async (req, res) => {
       };
     }
 
-    // CREATE THE ORDER
     const order = await Order.create({
       orderId: uniqueOrderId,
       user: req.user._id,
       items: itemsForDB,
       priceBreakup: { subtotal, shipping, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
-      shipping: shippingData, // <-- USING THE NEW PROPER OBJECT
+      shipping: shippingData,
       status: 'Pending Payment',
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 
+    // Free Order Bypass
     if (finalTotal === 0) {
-      await processSuccessfulPayment(order, 'DISC-100', '100% Discount',systemConfig);
+      await processSuccessfulPayment(order, 'DISC-100', '100% Discount', systemConfig);
       return res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl: `${frontendUrl}/payment-status/${order.orderId}` }});
     }
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
-    console.log(payEnv)
-    if (!payEnv.merchantId) return res.status(500).json({ message: 'Payment gateway is not configured.' });
+    
+    // FIX 1: Check for clientId (V2) instead of merchantId (V1)
+    if (!payEnv.clientId) return res.status(500).json({ message: 'Payment gateway credentials are not configured.' });
 
-    const redirectUrl = await PhonePeService.initiatePayment({
+    // FIX 2: Destructure redirectUrl from the V2 Service response
+    const { redirectUrl } = await PhonePeService.initiatePayment({
       orderId: order.orderId,
       amount: finalTotal,
-      userId: req.user._id,
-      mobileNumber: req.user.mobile,
       redirectUrl: `${frontendUrl}/payment-status/${order.orderId}`,
-      callbackUrl: `${apiUrl}/api/orders/webhook/phonepe`,
       env: payEnv
     });
 
@@ -150,6 +145,7 @@ exports.createOrder = async (req, res) => {
     res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl } });
 
   } catch (error) {
+    console.error("Order Creation Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -165,18 +161,24 @@ exports.verifyPaymentStatus = async (req, res) => {
     }
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
-    const { code, data } = await PhonePeService.checkStatus({ orderId: order.orderId, env: payEnv });
+    
+    // FIX 3: V2 returns status inside 'state'
+    const statusResponse = await PhonePeService.checkStatus({ orderId: order.orderId, env: payEnv });
 
-    if (code === 'PAYMENT_SUCCESS') {
-      await processSuccessfulPayment(order, data.transactionId, data.paymentInstrument?.type || 'Online', payEnv);
-    } else if (code === 'PAYMENT_ERROR' || code === 'PAYMENT_DECLINED') {
+    if (statusResponse.state === 'COMPLETED') {
+      // Safely grab the transaction ID if PhonePe returns it in the array, otherwise fallback to Order ID
+      const txnId = statusResponse.paymentDetailsList?.[0]?.transactionId || order.orderId;
+      await processSuccessfulPayment(order, txnId, 'PhonePe', payEnv);
+    } else if (statusResponse.state === 'FAILED') {
       order.payment.status = 'Failed';
+      order.status = 'Failed';
       await order.save();
     }
     
-    return res.status(200).json({ status: order.status, paymentStatus: order.payment.status, code });
+    return res.status(200).json({ status: order.status, paymentStatus: order.payment.status, code: statusResponse.state });
 
   } catch (error) {
+    console.error("Verification Error:", error);
     res.status(500).json({ message: 'Gateway error during verification', details: error.message });
   }
 };
@@ -190,21 +192,19 @@ exports.retryPayment = async (req, res) => {
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 
-    const redirectUrl = await PhonePeService.initiatePayment({
+    // FIX 4: Destructure redirectUrl correctly
+    const { redirectUrl } = await PhonePeService.initiatePayment({
       orderId: order.orderId,
       amount: order.priceBreakup.total,
-      userId: req.user._id,
-      mobileNumber: req.user.mobile,
       redirectUrl: `${frontendUrl}/payment-status/${order.orderId}`,
-      callbackUrl: `${apiUrl}/api/orders/webhook/phonepe`,
       env: payEnv
     });
 
     res.status(200).json({ success: true, paymentPayload: { redirectUrl } });
 
   } catch (error) {
+    console.error("Retry Payment Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -224,34 +224,33 @@ exports.refundOrder = async (req, res) => {
       }
     }
 
-    // 2. Process PhonePe Refund
+    // 2. Process PhonePe V2 Refund
     const payEnv = await PhonePeService.getEnvConfig(Config);
-    const apiUrl = process.env.API_BASE_URL || 'http://localhost:5001';
 
     order.status = 'Refund Pending';
     await order.save();
 
+    // FIX 5: V2 strictly requires originalMerchantOrderId
     const response = await PhonePeService.initiateRefund({
-      originalTxnId: order.payment.txnId,
+      originalMerchantOrderId: order.orderId,
       amount: order.priceBreakup.total,
-      userId: order.user,
-      callbackUrl: `${apiUrl}/api/orders/webhook/phonepe`,
       env: payEnv
     });
 
-    if (response.code === 'PAYMENT_SUCCESS' || response.code === 'PAYMENT_PENDING') {
+    // FIX 6: V2 returns status inside 'state'
+    if (response.state === 'PENDING' || response.state === 'COMPLETED') {
       order.status = 'Refunded';
       order.payment.status = 'Refunded';
       await order.save();
       res.status(200).json({ message: 'Refund initiated successfully', data: response });
     } else {
-      // If the bank refuses the refund, we flag it as an error so the admin knows money wasn't returned!
       order.status = 'Refund Failed - Needs Attention';
       await order.save();
       res.status(400).json({ message: 'Refund failed at gateway. Order flagged for review.' });
     }
 
   } catch (error) {
+    console.error("Refund Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
