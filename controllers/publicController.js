@@ -2,6 +2,7 @@ const Order = require('../models/Order');
 const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const Review = require('../models/Review');
+const Referral = require('../models/Referral');
 
 // @route   GET /api/public/recent-purchases
 // @desc    Get anonymized data of the last 10 successful orders
@@ -215,6 +216,6 @@ exports.verifyReferralCode =  async (req, res) => {
       referrerName: referral.user.name.split(' ')[0] // Just send the first name for privacy
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error during verification' });
+    res.status(500).json({ message: 'Server error during verification' + error});
   }
 };
