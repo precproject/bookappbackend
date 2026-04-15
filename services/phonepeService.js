@@ -63,7 +63,7 @@ class PhonePeService {
         throw new Error(response.data.message || 'Payment initiation failed at gateway');
       }
     }catch(error){
-      throw new Error(error?.response?.data?.message || error)
+      throw new Error("Facing Payment Error ! Try Later")
     }
   }
 
