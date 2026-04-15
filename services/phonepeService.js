@@ -10,7 +10,7 @@ class PhonePeService {
    */
   static async getEnvConfig(ConfigModel) {
     const config = await ConfigModel.findOne({ singletonId: 'SYSTEM_CONFIG' });
-    const isLive = config?.payment?.isLiveMode === true || process.env.PHONEPE_ENV === 'PROD';
+    const isLive = config?.payment?.isLiveMode === true;
 
     return {
       clientId: config?.payment?.clientId || process.env.PHONEPE_CLIENT_ID,
@@ -35,10 +35,12 @@ class PhonePeService {
    * Ref: POST /v1/oauth/token
    */
   static async getAccessToken(env) {
+    console.log(1)
     // Return cached token if valid (with 60-second safety buffer)
     if (cachedToken && tokenExpiryTime && Date.now() < (tokenExpiryTime - 60000)) {
       return cachedToken;
     }
+    console.log(2)
 
     // PhonePe V2 requires application/x-www-form-urlencoded
     const payload = new URLSearchParams({
@@ -47,12 +49,13 @@ class PhonePeService {
       client_version: env.clientVersion,
       grant_type: 'client_credentials'
     });
-
+    console.log(payload)
+    console.log(env)
+    console.log("${env.authBaseUrl}/v1/oauth/token")
     try {
       const response = await axios.post(`${env.authBaseUrl}/v1/oauth/token`, payload, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
-
       cachedToken = response.data.access_token;
       tokenExpiryTime = Date.now() + (response.data.expires_in * 1000); 
 

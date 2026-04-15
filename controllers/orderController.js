@@ -156,26 +156,38 @@ exports.verifyPaymentStatus = async (req, res) => {
     const order = await Order.findOne({ orderId: req.params.orderId });
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
+    // If already processed by Webhook, return current status immediately
     if (order.status !== 'Pending Payment') {
       return res.status(200).json({ status: order.status, paymentStatus: order.payment.status });
     }
 
+    // 1. Fetch the FULL config for processSuccessfulPayment (Emails, Referrals, etc.)
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    
+    // 2. Fetch the Payment-specific environment variables
     const payEnv = await PhonePeService.getEnvConfig(Config);
     
-    // FIX 3: V2 returns status inside 'state'
     const statusResponse = await PhonePeService.checkStatus({ orderId: order.orderId, env: payEnv });
 
     if (statusResponse.state === 'COMPLETED') {
-      // Safely grab the transaction ID if PhonePe returns it in the array, otherwise fallback to Order ID
+      // Safely grab the transaction ID
       const txnId = statusResponse.paymentDetailsList?.[0]?.transactionId || order.orderId;
-      await processSuccessfulPayment(order, txnId, 'PhonePe', payEnv);
+      
+      // CRITICAL FIX: Pass systemConfig here, NOT payEnv!
+      await processSuccessfulPayment(order, txnId, 'PhonePe', systemConfig);
+      
     } else if (statusResponse.state === 'FAILED') {
       order.payment.status = 'Failed';
       order.status = 'Failed';
       await order.save();
     }
     
-    return res.status(200).json({ status: order.status, paymentStatus: order.payment.status, code: statusResponse.state });
+    // Return the fresh state back to the React frontend
+    return res.status(200).json({ 
+      status: order.status, 
+      paymentStatus: order.payment.status, 
+      code: statusResponse.state 
+    });
 
   } catch (error) {
     console.error("Verification Error:", error);
@@ -188,12 +200,16 @@ exports.retryPayment = async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId, user: req.user._id });
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (order.status !== 'Pending Payment') return res.status(400).json({ message: 'Order is not pending payment' });
+    
+    // Security check: Only allow retries on pending orders
+    if (order.status !== 'Pending Payment') {
+      return res.status(400).json({ message: 'Order is not pending payment' });
+    }
 
     const payEnv = await PhonePeService.getEnvConfig(Config);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-    // FIX 4: Destructure redirectUrl correctly
+    // Initiate a fresh V2 checkout session
     const { redirectUrl } = await PhonePeService.initiatePayment({
       orderId: order.orderId,
       amount: order.priceBreakup.total,
