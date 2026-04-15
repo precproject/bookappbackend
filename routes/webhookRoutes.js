@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { phonepeWebhook, deliveryWebhook } = require('../controllers/webhookController');
+
+// CORRECT: Use curly braces to extract the exact function
+const { phonepeWebhook } = require('../controllers/webhookController'); 
 
 router.post('/phonepe', phonepeWebhook);
-router.post('/delivery', deliveryWebhook);
 
 module.exports = router;
