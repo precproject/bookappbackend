@@ -3,7 +3,7 @@ const axios = require('axios');
 
 class PhonePeService {
   /**
-   * Dynamically fetch configuration for Test or Production environments
+   * 1. Dynamically fetch configuration for Test or Production environments
    */
   static async getEnvConfig(ConfigModel) {
     const config = await ConfigModel.findOne({ singletonId: 'SYSTEM_CONFIG' });
@@ -13,6 +13,7 @@ class PhonePeService {
       merchantId: config?.payment?.merchantId || process.env.PHONEPE_MERCHANT_ID,
       saltKey: config?.payment?.saltKey || process.env.PHONEPE_SALT_KEY,
       saltIndex: config?.payment?.saltIndex || process.env.PHONEPE_SALT_INDEX || '1',
+      // Verified UAT and PROD endpoints for PhonePe V1 API
       baseUrl: isLive 
         ? 'https://api.phonepe.com/apis/hermes' 
         : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
@@ -21,7 +22,7 @@ class PhonePeService {
   }
 
   /**
-   * PhonePe Standard SHA256 Checksum Generator
+   * 2. PhonePe Standard SHA256 Checksum Generator for API Requests
    */
   static generateChecksum(base64Payload, endpoint, saltKey, saltIndex) {
     const stringToHash = base64Payload + endpoint + saltKey;
@@ -30,63 +31,99 @@ class PhonePeService {
   }
 
   /**
-   * Step 1 & 2: Create Payload and Invoke PayPage URL
-   * Ref: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/create-payment
+   * 3. Validate Webhook (S2S Callback) Checksum
+   * NOTE: Webhook checksums do NOT include the endpoint url in the hash string.
+   */
+  static verifyWebhook(base64Response, xVerifyHeader, saltKey) {
+    const stringToHash = base64Response + saltKey;
+    const expectedHash = crypto.createHash('sha256').update(stringToHash).digest('hex');
+    
+    // The header comes as "HASH###INDEX". We only compare the hash part to be extra safe.
+    const [receivedHash] = xVerifyHeader.split('###');
+    return expectedHash === receivedHash;
+  }
+
+  /**
+   * 4. Create Payload and Invoke PayPage URL
    */
   static async initiatePayment({ orderId, amount, userId, mobileNumber, redirectUrl, callbackUrl, env }) {
     const endpoint = '/pg/v1/pay';
     
+    // PhonePe V1 Payload Structure
     const payload = {
       merchantId: env.merchantId,
-      merchantTransactionId: orderId,
+      merchantTransactionId: orderId.toString(),
       merchantUserId: userId.toString(),
-      amount: Math.round(amount * 100), // PhonePe requires amount strictly in PAISE
+      amount: Math.round(amount * 100), // PhonePe requires amount strictly in PAISE (₹1 = 100 paise)
       redirectUrl: redirectUrl,
       redirectMode: "REDIRECT",
-      callbackUrl: callbackUrl, // Webhook destination
+      callbackUrl: callbackUrl, // Webhook destination for Server-to-Server ping
       mobileNumber: mobileNumber || '9999999999',
       paymentInstrument: { type: "PAY_PAGE" }
     };
 
+    // Convert payload to Base64
     const base64EncodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
+    
+    // Generate X-VERIFY Header
     const xVerifyChecksum = this.generateChecksum(base64EncodedPayload, endpoint, env.saltKey, env.saltIndex);
 
-    try{
-      const response = await axios.post(`${env.baseUrl}${endpoint}`, { request: base64EncodedPayload }, {
-        headers: { 'Content-Type': 'application/json', 'X-VERIFY': xVerifyChecksum }
-      });
+    try {
+      const response = await axios.post(`${env.baseUrl}${endpoint}`, 
+        { request: base64EncodedPayload }, 
+        { 
+          headers: { 
+            'Content-Type': 'application/json', 
+            'X-VERIFY': xVerifyChecksum 
+          } 
+        }
+      );
 
+      // Successfully generated payment link
       if (response.data && response.data.success) {
-        // Return the secure redirect URL for the frontend iframe/redirect
-        return response.data.data.instrumentResponse.redirectInfo.url;
+        return {
+          success: true,
+          redirectUrl: response.data.data.instrumentResponse.redirectInfo.url
+        };
       } else {
         throw new Error(response.data.message || 'Payment initiation failed at gateway');
       }
-    }catch(error){
-      throw new Error("Facing Payment Error ! Try Later " + error)
+    } catch (error) {
+      // Safely capture and log the exact error from PhonePe (e.g. "Invalid Merchant ID")
+      const gatewayError = error.response?.data?.message || error.message;
+      console.error("[PhonePe Initiate Error]:", error.response?.data || error.message);
+      throw new Error(`Payment Gateway Error: ${gatewayError}`);
     }
   }
 
   /**
-   * Step 3: Check Order Status
-   * Ref: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/order-status
+   * 5. Check Order Status (Manual Polling/Failsafe)
    */
   static async checkStatus({ orderId, env }) {
     const endpoint = `/pg/v1/status/${env.merchantId}/${orderId}`;
     
-    // Status check requires empty payload for checksum
+    // Status check is a GET request, so the payload portion of the checksum is an empty string
     const checksum = this.generateChecksum('', endpoint, env.saltKey, env.saltIndex);
 
-    const response = await axios.get(`${env.baseUrl}${endpoint}`, {
-      headers: { 'Content-Type': 'application/json', 'X-VERIFY': checksum, 'X-MERCHANT-ID': env.merchantId }
-    });
+    try {
+      const response = await axios.get(`${env.baseUrl}${endpoint}`, {
+        headers: { 
+          'Content-Type': 'application/json', 
+          'X-VERIFY': checksum, 
+          'X-MERCHANT-ID': env.merchantId 
+        }
+      });
 
-    return response.data; // Contains code (e.g., PAYMENT_SUCCESS) and data
+      // Returns the full status object (e.g., response.data.code === 'PAYMENT_SUCCESS')
+      return response.data; 
+    } catch (error) {
+      console.error("[PhonePe Status Check Error]:", error.response?.data || error.message);
+      throw new Error("Failed to check payment status with gateway.");
+    }
   }
 
   /**
-   * Refund Functionality
-   * Ref: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/refund
+   * 6. Refund Functionality
    */
   static async initiateRefund({ originalTxnId, amount, userId, callbackUrl, env }) {
     const endpoint = '/pg/v1/refund';
@@ -95,8 +132,8 @@ class PhonePeService {
     const payload = {
       merchantId: env.merchantId,
       merchantUserId: userId.toString(),
-      originalTransactionId: originalTxnId,
-      merchantTransactionId: refundTxnId,
+      originalTransactionId: originalTxnId, // The Provider Reference ID from the original successful payment
+      merchantTransactionId: refundTxnId, // A new, unique ID for this refund request
       amount: Math.round(amount * 100), // PAISE
       callbackUrl: callbackUrl
     };
@@ -104,11 +141,22 @@ class PhonePeService {
     const base64EncodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
     const xVerifyChecksum = this.generateChecksum(base64EncodedPayload, endpoint, env.saltKey, env.saltIndex);
 
-    const response = await axios.post(`${env.baseUrl}${endpoint}`, { request: base64EncodedPayload }, {
-      headers: { 'Content-Type': 'application/json', 'X-VERIFY': xVerifyChecksum }
-    });
+    try {
+      const response = await axios.post(`${env.baseUrl}${endpoint}`, 
+        { request: base64EncodedPayload }, 
+        { 
+          headers: { 
+            'Content-Type': 'application/json', 
+            'X-VERIFY': xVerifyChecksum 
+          } 
+        }
+      );
 
-    return response.data;
+      return response.data;
+    } catch (error) {
+      console.error("[PhonePe Refund Error]:", error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || "Failed to initiate refund.");
+    }
   }
 }
 
