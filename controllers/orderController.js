@@ -17,7 +17,8 @@ exports.createOrder = async (req, res) => {
     if (!orderItems || orderItems.length === 0) return res.status(400).json({ message: 'No order items provided' });
 
     // =========================================================================
-    // 1. IDEMPOTENCY / ANTI-SPAM CHECK (Prevents Double-Click Order Duplication)
+    // 1. STRICT IDEMPOTENCY / ANTI-SPAM BLOCK
+    // Prevents creating a new order if a recent one is still pending.
     // =========================================================================
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const existingPendingOrder = await Order.findOne({
@@ -25,38 +26,22 @@ exports.createOrder = async (req, res) => {
       status: 'Pending Payment',
       createdAt: { $gte: fifteenMinutesAgo }
     }).sort({ createdAt: -1 });
-
+    console.log(existingPendingOrder);
+    
     if (existingPendingOrder) {
-      // Create comparison strings for items (e.g., "bookId_qty|bookId2_qty2")
-      const existingItemsStr = existingPendingOrder.items.map(i => `${i.book.toString()}_${i.qty}`).sort().join('|');
-      const incomingItemsStr = orderItems.map(i => `${i.bookId}_${i.qty}`).sort().join('|');
-      
-      // Compare Addresses
+      // Compare Addresses to apply the strict "same user, same address" rule
       const isSameAddress = shippingAddress 
-        ? existingPendingOrder.shipping?.pincode === shippingAddress.pincode && existingPendingOrder.shipping?.street === shippingAddress.street
+        ? existingPendingOrder.shipping?.pincode === shippingAddress.pincode && 
+          existingPendingOrder.shipping?.street === shippingAddress.street
         : true; // Digital orders always match
 
-      // If items, address, and discount match, REUSE the existing order!
-      if (existingItemsStr === incomingItemsStr && isSameAddress && existingPendingOrder.priceBreakup?.discountCode === discountCode) {
-        console.log(`[Order System] Resuming existing pending order #${existingPendingOrder.orderId} to prevent duplicates.`);
+      // If the user has a pending order at this address, BLOCK the new order creation
+      if (isSameAddress) {
+        console.log(`[Order System] Blocked duplicate order attempt. User ${req.user._id} has pending order #${existingPendingOrder.orderId}.`);
         
-        const payEnv = await PhonePeService.getEnvConfig(Config);
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-        
-        // Regenerate the payment link for the existing order
-        const { redirectUrl } = await PhonePeService.initiatePayment({
-          orderId: existingPendingOrder.orderId,
-          amount: existingPendingOrder.priceBreakup.total,
-          redirectUrl: `${frontendUrl}/payment-status/${existingPendingOrder.orderId}`,
-          env: payEnv
-        });
-
-        // Return 200 OK (Not 201 Created) since we reused the order
-        return res.status(200).json({ 
-          success: true, 
-          orderId: existingPendingOrder.orderId, 
-          paymentPayload: { redirectUrl },
-          message: "Resumed existing pending order"
+        return res.status(429).json({ 
+          success: false, 
+          message: `You have an active pending order (#${existingPendingOrder.orderId}). Please check your Dashboard to complete or cancel it, or wait 15 minutes for it to expire.`
         });
       }
     }
@@ -93,7 +78,7 @@ exports.createOrder = async (req, res) => {
     let appliedDiscountCode = null;
     let appliedReferral = null;
 
-    // 3. Process Discounts securely (Only triggered for NEW orders)
+    // 3. Process Discounts
     if (discountCode) {
       const discount = await Discount.findOne({ code: discountCode.toUpperCase(), status: 'Active' });
       if (discount && (!discount.validTill || new Date(discount.validTill) > new Date()) && (!discount.maxUsage || discount.currentUsage < discount.maxUsage)) {
