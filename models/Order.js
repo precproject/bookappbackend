@@ -19,12 +19,13 @@ const orderSchema = new mongoose.Schema({
     discountAmount: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },
     referralApplied: { type: String, default: null },
+    codFee: { type: Number, default: 0 }, // <-- Add this
     total: { type: Number, required: true }
   },
   
   payment: {
     txnId: { type: String },
-    method: { type: String }, // 'PhonePe', 'Razorpay', etc.
+    method: { type: String, enum: ['PhonePe', 'Razorpay', 'COD'], default: 'PhonePe' }, // <-- Ensure COD is here
     status: { type: String, enum: ['Pending', 'Success', 'Failed','Refunded'], default: 'Pending' },
     initiatedAt: { type: Date, default: Date.now },
     updatedAt: { type: Date },

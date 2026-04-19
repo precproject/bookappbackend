@@ -13,13 +13,19 @@ const { processSuccessfulPayment } = require('../services/orderService');
 // --- CREATE ORDER (The Cashier Calculates the Bill) ---
 exports.createOrder = async (req, res) => {
   try {
-    const { orderItems, shippingAddress, discountCode, referralCode } = req.body;
+    // 1. Extract paymentMethod from the frontend (Defaults to 'ONLINE' if not provided)
+    const { orderItems, shippingAddress, discountCode, referralCode, paymentMethod = 'ONLINE'  } = req.body;
     if (!orderItems || orderItems.length === 0) return res.status(400).json({ message: 'No order items provided' });
 
     // Fetch system configs early so they are available for the entire flow
     const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
     const payEnv = await PhonePeService.getEnvConfig(Config);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    // Verify COD is actually enabled if the user selected it
+    if (paymentMethod === 'COD' && !systemConfig?.payment?.isCodEnabled) {
+      return res.status(400).json({ message: 'Cash on Delivery is currently disabled.' });
+    }
 
     // =========================================================================
     // 1. ADVANCED IDEMPOTENCY & RETRY LOGIC
@@ -44,6 +50,21 @@ exports.createOrder = async (req, res) => {
         return res.status(429).json({ 
           success: false, 
           message: `You have an active pending order (#${existingPendingOrder.orderId}). Please complete or cancel it in your Dashboard before starting a new one.`
+        });
+      }
+
+      // If they originally tried ONLINE but now switched to COD, we need to update the existing order and confirm it
+      if (paymentMethod === 'COD') {
+        existingPendingOrder.payment.method = 'COD';
+        existingPendingOrder.payment.status = 'Pending';
+        existingPendingOrder.status = 'In Progress'; // Bypass gateway, mark as confirmed
+        existingPendingOrder.transitHistory.push({ stage: 'Order Confirmed (Cash on Delivery)', time: Date.now(), completed: true });
+        await existingPendingOrder.save();
+
+        return res.status(200).json({ 
+          success: true, 
+          orderId: existingPendingOrder.orderId, 
+          isCOD: true 
         });
       }
 
@@ -118,6 +139,9 @@ exports.createOrder = async (req, res) => {
     const gstPercentage = systemConfig?.taxConfig?.gstPercentage ?? 5;
     const configShippingCharge = systemConfig?.delivery?.shippingCharge ?? 50;
 
+    // Add COD Fee if applicable
+    const codFee = paymentMethod === 'COD' ? (systemConfig?.payment?.codCharge || 0) : 0;
+
     let subtotal = 0;
     let hasPhysicalItem = false;
     const itemsForDB = [];
@@ -129,15 +153,20 @@ exports.createOrder = async (req, res) => {
       
       if (book.type === 'Physical') {
         hasPhysicalItem = true;
-        if (book.stock < item.qty) {
-          const bookTitle = typeof book.title === 'object' ? (book.title.en || 'Book') : book.title;
-          return res.status(400).json({ message: `Insufficient stock for ${bookTitle}` });
-        }
+        // if (book.stock < item.qty) {
+        //   const bookTitle = typeof book.title === 'object' ? (book.title.en || 'Book') : book.title;
+        //   return res.status(400).json({ message: `Insufficient stock for ${bookTitle}` });
+        // }
+        if (book.stock < item.qty) return res.status(400).json({ message: `Insufficient stock` });
       }
       
-      const bookTitle = typeof book.title === 'object' ? (book.title.en || book.title.mr) : book.title;
       subtotal += book.price * item.qty;
       itemsForDB.push({ book: book._id, name: book.title, type: book.type, qty: item.qty, price: book.price });
+    }
+
+    // COD is usually not allowed for purely digital products
+    if (paymentMethod === 'COD' && !hasPhysicalItem) {
+      return res.status(400).json({ message: 'Cash on Delivery is not available for digital-only orders.' });
     }
 
     let discountAmount = 0;
@@ -196,7 +225,7 @@ exports.createOrder = async (req, res) => {
     const taxRateMultiplier = isGstEnabled ? (gstPercentage / 100) : 0;
     const taxAmount = Math.round(taxableAmount * taxRateMultiplier);
     const shipping = hasPhysicalItem ? configShippingCharge : 0; 
-    const finalTotal = Math.round(taxableAmount + taxAmount + shipping);
+    const finalTotal = Math.round(taxableAmount + taxAmount + shipping + codFee);
 
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
@@ -205,23 +234,48 @@ exports.createOrder = async (req, res) => {
     if (hasPhysicalItem) {
       if (!shippingAddress || !shippingAddress.pincode) return res.status(400).json({ message: 'Shipping address required.' });
       shippingData = { ...shippingAddress, partner: 'Pending Assign', trackingId: null };
-    } else {
-      shippingData = { fullName: req.user.name, phone: req.user.mobile, street: 'Digital', city: 'Digital', state: 'Digital', pincode: '000000', partner: 'Instant', trackingId: 'Digital' };
-    }
+    } 
+    
+    // else {
+    //   shippingData = { fullName: req.user.name, phone: req.user.mobile, street: 'Digital', city: 'Digital', state: 'Digital', pincode: '000000', partner: 'Instant', trackingId: 'Digital' };
+    // }
+
+    // Determine initial status based on payment method
+    const initialStatus = paymentMethod === 'COD' ? 'In Progress' : 'Pending Payment';
+    const initialTransitStage = paymentMethod === 'COD' ? 'Order Confirmed (Cash on Delivery)' : 'Order Placed (Awaiting Payment)';
 
     // 5. Create Fresh Order
     const order = await Order.create({
       orderId: uniqueOrderId,
       user: req.user._id,
       items: itemsForDB,
-      priceBreakup: { subtotal, shipping, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
+      priceBreakup: { subtotal, shipping, codFee, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
       shipping: shippingData,
-      status: 'Pending Payment',
-      payment: { retryCount: 0 }, // Initialize retry count
-      transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
+      status: initialStatus,
+      payment: { method: paymentMethod, status: 'Pending', retryCount: 0 },
+      transitHistory: [{ stage: initialTransitStage, time: Date.now(), completed: true }]
     });
 
-    // 6. Free Order Bypass
+    // --- COD SHORT-CIRCUIT (BYPASS PAYMENT GATEWAY) ---
+    if (paymentMethod === 'COD') {
+      // Send confirmation email instantly since they don't go to PhonePe
+      if (systemConfig?.emailAlerts?.orderPlaced !== false) {
+        sendEmail({ 
+          to: req.user.email, 
+          subject: `ऑर्डर निश्चित झाली - #${order.orderId} | Order Confirmed`, 
+          html: templates.orderPlacedEmail(order, req.user.name) 
+        }).catch(console.error);
+      }
+      
+      // Return success with a flag so frontend knows to show "Success" directly without opening PhonePe popup
+      return res.status(201).json({ 
+        success: true, 
+        orderId: order.orderId, 
+        isCOD: true 
+      });
+    }
+
+    // 6. Free Order Bypass // --- ONLINE PAYMENT LOGIC (PhonePe) ---
     if (finalTotal === 0) {
       await processSuccessfulPayment(order, 'DISC-100', '100% Discount', systemConfig);
       return res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl: `${frontendUrl}/payment-status/${order.orderId}` }});
@@ -237,13 +291,13 @@ exports.createOrder = async (req, res) => {
       env: payEnv
     });
 
-    if (systemConfig?.emailAlerts?.orderPlaced !== false) {
-      sendEmail({ 
-        to: req.user.email, 
-        subject: `ऑर्डर सुरू झाली - #${order.orderId} | Order Initiated`, 
-        html: templates.orderPlacedEmail(order, req.user.name) 
-      }).catch(console.error);
-    }
+    // if (systemConfig?.emailAlerts?.orderPlaced !== false) {
+    //   sendEmail({ 
+    //     to: req.user.email, 
+    //     subject: `ऑर्डर सुरू झाली - #${order.orderId} | Order Initiated`, 
+    //     html: templates.orderPlacedEmail(order, req.user.name) 
+    //   }).catch(console.error);
+    // }
 
     res.status(201).json({ success: true, orderId: order.orderId, paymentPayload: { redirectUrl } });
 

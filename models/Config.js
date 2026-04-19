@@ -46,7 +46,9 @@ const configSchema = new mongoose.Schema({
     clientVersion: { type: String, default: '1' },  // Replaces saltIndex
     webhookUsername: { type: String, default: '' }, // NEW: Required for V2 Webhooks
     webhookPassword: { type: String, default: '' }, // NEW: Required for V2 Webhooks
-    isLiveMode: { type: Boolean, default: false }
+    isLiveMode: { type: Boolean, default: false },
+    isCodEnabled: { type: Boolean, default: true },
+    codCharge: { type: Number, default: 0 } // Optional extra fee for COD
   },
 
   // 6. Delivery API (Original + expanded)
