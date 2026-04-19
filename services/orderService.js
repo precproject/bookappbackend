@@ -56,7 +56,6 @@ exports.processSuccessfulPayment = async (order, transactionId, paymentMethod, c
     }
   }
 
-  console.log(hasPhysicalItems)
   // 3. Automate Delhivery AWB
   if (hasPhysicalItems) {
     await order.populate('items.book'); 

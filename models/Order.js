@@ -25,9 +25,10 @@ const orderSchema = new mongoose.Schema({
   payment: {
     txnId: { type: String },
     method: { type: String }, // 'PhonePe', 'Razorpay', etc.
-    status: { type: String, enum: ['Pending', 'Success', 'Failed'], default: 'Pending' },
+    status: { type: String, enum: ['Pending', 'Success', 'Failed','Refunded'], default: 'Pending' },
     initiatedAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date }
+    updatedAt: { type: Date },
+    retryCount: { type: Number, default: 0 }, // <-- Add this
   },
   
   shipping: {

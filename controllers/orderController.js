@@ -16,9 +16,13 @@ exports.createOrder = async (req, res) => {
     const { orderItems, shippingAddress, discountCode, referralCode } = req.body;
     if (!orderItems || orderItems.length === 0) return res.status(400).json({ message: 'No order items provided' });
 
+    // Fetch system configs early so they are available for the entire flow
+    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    const payEnv = await PhonePeService.getEnvConfig(Config);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
     // =========================================================================
-    // 1. STRICT IDEMPOTENCY / ANTI-SPAM BLOCK
-    // Prevents creating a new order if a recent one is still pending.
+    // 1. ADVANCED IDEMPOTENCY & RETRY LOGIC
     // =========================================================================
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const existingPendingOrder = await Order.findOne({
@@ -26,28 +30,90 @@ exports.createOrder = async (req, res) => {
       status: 'Pending Payment',
       createdAt: { $gte: fifteenMinutesAgo }
     }).sort({ createdAt: -1 });
-    console.log(existingPendingOrder);
-    
-    if (existingPendingOrder) {
-      // Compare Addresses to apply the strict "same user, same address" rule
-      const isSameAddress = shippingAddress 
-        ? existingPendingOrder.shipping?.pincode === shippingAddress.pincode && 
-          existingPendingOrder.shipping?.street === shippingAddress.street
-        : true; // Digital orders always match
 
-      // If the user has a pending order at this address, BLOCK the new order creation
-      if (isSameAddress) {
-        console.log(`[Order System] Blocked duplicate order attempt. User ${req.user._id} has pending order #${existingPendingOrder.orderId}.`);
-        
+    if (existingPendingOrder) {
+      const existingItemsStr = existingPendingOrder.items.map(i => `${i.book.toString()}_${i.qty}`).sort().join('|');
+      const incomingItemsStr = orderItems.map(i => `${i.bookId}_${i.qty}`).sort().join('|');
+      
+      const isSameAddress = shippingAddress 
+        ? existingPendingOrder.shipping?.pincode === shippingAddress.pincode && existingPendingOrder.shipping?.street === shippingAddress.street
+        : true;
+
+      // Scenario A: Cart or Address changed. BLOCK completely.
+      if (existingItemsStr !== incomingItemsStr || !isSameAddress || existingPendingOrder.priceBreakup?.discountCode !== discountCode) {
         return res.status(429).json({ 
           success: false, 
-          message: `You have an active pending order (#${existingPendingOrder.orderId}). Please check your Dashboard to complete or cancel it, or wait 15 minutes for it to expire.`
+          message: `You have an active pending order (#${existingPendingOrder.orderId}). Please complete or cancel it in your Dashboard before starting a new one.`
         });
       }
+
+      // Scenario B: Cart and Address match exactly. INTELLIGENT RETRY.
+      console.log(`[Order System] Evaluating existing pending order #${existingPendingOrder.orderId} for retry.`);
+      
+      let statusResponse = { state: 'FAILED' }; // Default to failed if no gateway session exists yet
+      try {
+        statusResponse = await PhonePeService.checkStatus({ orderId: existingPendingOrder.orderId, env: payEnv });
+      } catch (err) {
+        // Ignored. A 404 from PhonePe means they closed the popup before the session fully initialized.
+      }
+
+      // 1. Payment actually went through!
+      if (statusResponse.state === 'COMPLETED' || statusResponse.state === 'PAYMENT_SUCCESS') {
+        const txnId = statusResponse.paymentDetailsList?.[0]?.transactionId || existingPendingOrder.orderId;
+        await processSuccessfulPayment(existingPendingOrder, txnId, 'PhonePe', systemConfig);
+        return res.status(200).json({ 
+          success: true, 
+          orderId: existingPendingOrder.orderId,
+          paymentPayload: { redirectUrl: `${frontendUrl}/payment-status/${existingPendingOrder.orderId}` }
+        });
+      }
+
+      // 2. Payment is still processing at the bank. Enforce wait timer.
+      if (statusResponse.state === 'PENDING') {
+        const waitPeriodMs = 3 * 60 * 1000; // 3 minutes
+        const timeSinceLastUpdate = Date.now() - new Date(existingPendingOrder.updatedAt || existingPendingOrder.createdAt).getTime();
+
+        if (timeSinceLastUpdate < waitPeriodMs) {
+          const remainingSeconds = Math.ceil((waitPeriodMs - timeSinceLastUpdate) / 1000);
+          return res.status(429).json({ 
+            success: false, 
+            message: `Payment is currently processing. Please wait ${remainingSeconds} seconds before trying again.` 
+          });
+        }
+      }
+
+      // 3. Payment Failed or Wait Timer Expired -> Process Retry limits
+      const retryCount = existingPendingOrder.payment?.retryCount || 0;
+      
+      if (retryCount >= 3) {
+        return res.status(429).json({ 
+          success: false,
+          message: "Maximum payment attempts (3) reached for this order. Please wait 15 minutes for it to expire and try again."
+        });
+      }
+
+      // Safe to generate a new payment link
+      existingPendingOrder.payment = existingPendingOrder.payment || {};
+      existingPendingOrder.payment.retryCount = retryCount + 1;
+      existingPendingOrder.updatedAt = Date.now();
+      await existingPendingOrder.save();
+
+      const { redirectUrl } = await PhonePeService.initiatePayment({
+        orderId: existingPendingOrder.orderId,
+        amount: existingPendingOrder.priceBreakup.total,
+        redirectUrl: `${frontendUrl}/payment-status/${existingPendingOrder.orderId}`,
+        env: payEnv
+      });
+
+      return res.status(200).json({ 
+        success: true, 
+        orderId: existingPendingOrder.orderId, 
+        paymentPayload: { redirectUrl }
+      });
     }
     // =========================================================================
 
-    const systemConfig = await Config.findOne({ singletonId: 'SYSTEM_CONFIG' });
+    // ... (Fresh Order Generation Code Below) ...
     const isGstEnabled = systemConfig?.taxConfig?.isGstEnabled ?? true;
     const gstPercentage = systemConfig?.taxConfig?.gstPercentage ?? 5;
     const configShippingCharge = systemConfig?.delivery?.shippingCharge ?? 50;
@@ -145,10 +211,9 @@ exports.createOrder = async (req, res) => {
       priceBreakup: { subtotal, shipping, discountCode: appliedDiscountCode, discountAmount, taxAmount, referralApplied: appliedReferral?.code, total: finalTotal },
       shipping: shippingData,
       status: 'Pending Payment',
+      payment: { retryCount: 0 }, // Initialize retry count
       transitHistory: [{ stage: 'Order Placed (Awaiting Payment)', time: Date.now(), completed: true }]
     });
-
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     // 6. Free Order Bypass
     if (finalTotal === 0) {
@@ -157,8 +222,6 @@ exports.createOrder = async (req, res) => {
     }
 
     // 7. PhonePe Gateway Initialization
-    const payEnv = await PhonePeService.getEnvConfig(Config);
-    
     if (!payEnv.clientId) return res.status(500).json({ message: 'Payment gateway credentials are not configured.' });
 
     const { redirectUrl } = await PhonePeService.initiatePayment({
@@ -203,7 +266,6 @@ exports.verifyPaymentStatus = async (req, res) => {
     
     const statusResponse = await PhonePeService.checkStatus({ orderId: order.orderId, env: payEnv });
 
-    console.log(statusResponse)
     if (statusResponse.state === 'COMPLETED') {
       // Safely grab the transaction ID
       const txnId = statusResponse?.paymentDetails?.transactionId || statusResponse.orderId;
