@@ -144,14 +144,38 @@ exports.createOrder = async (req, res) => {
     let appliedDiscountCode = null;
     let appliedReferral = null;
 
+    // =========================================================================
+    // 3. THE SMART PREBOOK DISCOUNT LOGIC (Zero Schema Changes)
+    // =========================================================================
+    
+    // Check if the user has ANY past orders that were successfully paid
+    const hasSuccessfulPastOrder = await Order.exists({
+      user: req.user._id,
+      'payment.status': 'Success' 
+    });
+
+    // If they are a prebooker AND they've never had a successful payment:
+    if (req.user.isPrebooked && !hasSuccessfulPastOrder) {
+      // Fallback to 50 if you don't want to add this to the Config schema either
+      const prebookDiscountValue = systemConfig?.shoppingRules?.prebookDiscountValue || 50; 
+      
+      discountAmount += prebookDiscountValue;
+      appliedDiscountCode = 'PREBOOK-REWARD'; // Hijack the existing string field!
+    }
+
     // 3. Process Discounts
     if (discountCode) {
       const discount = await Discount.findOne({ code: discountCode.toUpperCase(), status: 'Active' });
       if (discount && (!discount.validTill || new Date(discount.validTill) > new Date()) && (!discount.maxUsage || discount.currentUsage < discount.maxUsage)) {
-        discountAmount = discount.type === 'Percentage' 
+          const standardDiscount = discount.type === 'Percentage' 
           ? Math.min((subtotal * discount.value) / 100, discount.maxDiscount || Infinity)
           : discount.value;
-        appliedDiscountCode = discount.code;
+        
+        discountAmount += standardDiscount;
+
+        // Append the standard code to the record (e.g., "PREBOOK-REWARD, SAVE20")
+        appliedDiscountCode = appliedDiscountCode ? `${appliedDiscountCode}, ${discount.code}` : discount.code;
+
         discount.currentUsage += 1;
         await discount.save();
       }
@@ -165,6 +189,9 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    // Cap the total discount so the bill never goes negative
+    discountAmount = Math.min(discountAmount, subtotal);
+
     const taxableAmount = Math.max(0, subtotal - discountAmount);
     const taxRateMultiplier = isGstEnabled ? (gstPercentage / 100) : 0;
     const taxAmount = Math.round(taxableAmount * taxRateMultiplier);
@@ -173,34 +200,13 @@ exports.createOrder = async (req, res) => {
 
     const uniqueOrderId = `BK-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
-    // 4. Handle Shipping Data Structure
+    // 6. Handle Shipping Data Structure
     let shippingData = undefined;
-
     if (hasPhysicalItem) {
-      if (!shippingAddress || !shippingAddress.pincode) {
-        return res.status(400).json({ message: 'A complete shipping address is required for physical books.' });
-      }
-      shippingData = {
-        fullName: shippingAddress.fullName,
-        phone: shippingAddress.phone,
-        street: shippingAddress.street,
-        city: shippingAddress.city,
-        state: shippingAddress.state,
-        pincode: shippingAddress.pincode,
-        partner: 'Pending Assign',
-        trackingId: null
-      };
+      if (!shippingAddress || !shippingAddress.pincode) return res.status(400).json({ message: 'Shipping address required.' });
+      shippingData = { ...shippingAddress, partner: 'Pending Assign', trackingId: null };
     } else {
-      shippingData = {
-        fullName: req.user.name,
-        phone: req.user.mobile,
-        street: 'Digital Delivery',
-        city: 'Digital',
-        state: 'Digital',
-        pincode: '000000',
-        partner: 'Email / Instant',
-        trackingId: 'Digital'
-      };
+      shippingData = { fullName: req.user.name, phone: req.user.mobile, street: 'Digital', city: 'Digital', state: 'Digital', pincode: '000000', partner: 'Instant', trackingId: 'Digital' };
     }
 
     // 5. Create Fresh Order
